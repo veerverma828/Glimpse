@@ -80,16 +80,13 @@ function discoverLanIp() {
 
 /**
  * Resolve the public-facing host for the QR code / join link.
- * - For GitHub Pages deployments, use the full origin with repo path.
+ * - For GitHub Pages deployments, use the plain origin (the base path is
+ *   appended separately via import.meta.env.BASE_URL).
  * - For local dev (localhost/127.0.0.1/0.0.0.0), attempt LAN IP discovery
  *   so the QR code works when scanned from other devices on the network.
  * - Otherwise, use window.location.origin as-is.
  */
 async function resolvePublicHost() {
-  if (window.location.origin.includes('github.io')) {
-    return window.location.origin + '/Glimpse';
-  }
-
   const { hostname } = window.location;
   const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0';
 
@@ -107,12 +104,7 @@ export default function HostPage() {
   const [roomLoading, setRoomLoading] = useState(true);
   // Start with the current origin so the QR code renders immediately,
   // then update to the LAN IP once discovered (for mobile scanning).
-  const [publicHost, setPublicHost] = useState(() => {
-    if (window.location.origin.includes('github.io')) {
-      return window.location.origin + '/Glimpse';
-    }
-    return window.location.origin;
-  });
+  const [publicHost, setPublicHost] = useState(window.location.origin);
   const [status, setStatus] = useState('idle'); // idle | sharing | error
   const [viewers, setViewers] = useState([]);
   const [errorMessage, setErrorMessage] = useState('');
