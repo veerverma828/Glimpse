@@ -13,12 +13,12 @@
     "@tailwindcss/vite": "^4.3.2",
     "framer-motion": "^12.42.2",
     "lucide-react": "^1.23.0",
+    "peer": "^1.0.2",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-hot-toast": "^2.6.0",
-    "react-router-dom": "^7.18.1",
-    "socket.io-client": "^4.8.3"
+    "react-router-dom": "^7.18.1"
   },
   "devDependencies": {
     "@types/react": "^19.2.17",

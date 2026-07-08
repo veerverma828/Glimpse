@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { io } from 'socket.io-client';
+import { Peer } from 'peer';
 import { motion, AnimatePresence } from 'framer-motion';
 import { WifiOff, Monitor, RefreshCw } from 'lucide-react';
 import { createPeerConnection, closePeerConnection } from '../hooks/useWebRTC';
@@ -10,17 +10,13 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
 import Button from '../components/Button';
 
-const SIGNAL_URL = import.meta.env.VITE_SIGNAL_URL || 'http://localhost:4000';
-console.log('[ViewerPage] SIGNAL_URL:', SIGNAL_URL);
-console.log('[ViewerPage] window.location.origin:', window.location.origin);
-
 export default function ViewerPage() {
   const { roomId } = useParams();
   console.log('[ViewerPage] roomId from URL params:', roomId);
   const videoRef = useRef(null);
   const pcRef = useRef(null);
-  const socketRef = useRef(null);
-  const hostSocketIdRef = useRef(null);
+  const peerRef = useRef(null);
+  const dataConnRef = useRef(null);
   const pendingCandidatesRef = useRef([]);
   const [connectionStatus, setConnectionStatus] = useState('connecting'); // connecting | connected | disconnected | error
   const [hasStream, setHasStream] = useState(false);
@@ -41,26 +37,89 @@ export default function ViewerPage() {
   }, []);
 
   useEffect(() => {
-    console.log('[ViewerPage] Connecting socket to:', SIGNAL_URL);
-    const socket = io(SIGNAL_URL, {
-      transports: ['websocket', 'polling'],
-    });
-    socketRef.current = socket;
+    if (!roomId) return;
 
-    socket.on('connect', () => console.log('[ViewerPage] Socket connected, id:', socket.id));
-    socket.on('connect_error', (err) => {
-      console.error('[ViewerPage] Socket connect error:', err.message);
+    console.log('[ViewerPage] Creating Peer and connecting to room:', roomId);
+    const peer = new Peer();
+
+    peer.on('open', (myId) => {
+      console.log('[ViewerPage] Peer opened with ID:', myId);
+      console.log('[ViewerPage] Connecting to host peer:', roomId);
+
+      // Connect to the host's Peer ID (which is the roomId)
+      const dataConn = peer.connect(roomId, {
+        reliable: true,
+      });
+
+      dataConnRef.current = dataConn;
+
+      dataConn.on('open', () => {
+        console.log('[ViewerPage] Data channel opened to host');
+      });
+
+      dataConn.on('data', (data) => {
+        try {
+          const msg = typeof data === 'string' ? JSON.parse(data) : data;
+          console.log('[Viewer] Received from host:', msg.type);
+
+          const pc = pcRef.current;
+          if (!pc) return;
+
+          if (msg.type === 'offer' && msg.sdp) {
+            console.log('[Viewer] Received offer');
+            pc.setRemoteDescription(new RTCSessionDescription(msg.sdp))
+              .then(async () => {
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                if (dataConn.open) {
+                  dataConn.send(JSON.stringify({ type: 'answer', sdp: answer }));
+                }
+                await flushPendingCandidates(pc);
+              })
+              .catch((e) => {
+                console.error('[Viewer] Error handling offer:', e);
+              });
+          } else if (msg.type === 'candidate' && msg.candidate) {
+            if (pc.remoteDescription && pc.remoteDescription.type) {
+              pc.addIceCandidate(new RTCIceCandidate(msg.candidate)).catch((e) => {
+                console.warn('[Viewer] Error adding ICE candidate:', e);
+              });
+            } else {
+              console.log('[Viewer] Queuing ICE candidate until remote description is set');
+              pendingCandidatesRef.current.push(msg.candidate);
+            }
+          }
+        } catch (e) {
+          console.error('[Viewer] Error processing message:', e);
+        }
+      });
+
+      dataConn.on('close', () => {
+        console.log('[Viewer] Data channel closed');
+        if (videoRef.current) videoRef.current.srcObject = null;
+        setHasStream(false);
+        setConnectionStatus('disconnected');
+      });
+    });
+
+    peer.on('error', (err) => {
+      console.error('[ViewerPage] Peer error:', err);
       setConnectionStatus('error');
-      setErrorMessage('Could not connect to signaling server. Make sure you are on the same network.');
+      if (err.type === 'peer-unavailable') {
+        setErrorMessage('Room not found. The host may not be active yet. Try again later.');
+      } else {
+        setErrorMessage('Connection error: ' + err.message);
+      }
     });
 
+    // Create the RTCPeerConnection for receiving media
     const pc = createPeerConnection({
       onIceCandidate: (candidate) => {
-        const targetId = hostSocketIdRef.current;
-        if (targetId) {
-          socket.emit('signal', { to: targetId, data: { candidate } });
+        const dc = dataConnRef.current;
+        if (dc && dc.open) {
+          dc.send(JSON.stringify({ type: 'candidate', candidate }));
         } else {
-          console.warn('[Viewer] No host socket ID yet, dropping ICE candidate');
+          console.warn('[Viewer] No data channel open, dropping ICE candidate');
         }
       },
       onTrack: (event) => {
@@ -91,74 +150,14 @@ export default function ViewerPage() {
     });
     pcRef.current = pc;
 
-    // Wait for socket connection before joining room
-    const onConnected = () => {
-      socket.emit('viewer-join', { roomId });
-    };
-
-    if (socket.connected) {
-      onConnected();
-    } else {
-      socket.on('connect', onConnected);
-    }
-
-    // Handle room not active error - retry after a delay
-    socket.on('error-msg', (msg) => {
-      console.warn('[Viewer] Server error:', msg);
-      if (msg === 'Room not active') {
-        setTimeout(() => {
-          if (socket.connected) {
-            console.log('[Viewer] Retrying viewer-join...');
-            socket.emit('viewer-join', { roomId });
-          }
-        }, 2000);
-      } else {
-        setConnectionStatus('error');
-        setErrorMessage(msg);
-      }
-    });
-
-    // Acknowledgment that we joined successfully
-    socket.on('viewer-joined-ack', ({ roomId: ackRoomId }) => {
-      console.log('[Viewer] Successfully joined room:', ackRoomId);
-    });
-
-    socket.on('signal', async ({ from, data }) => {
-      try {
-        if (data.sdp && data.sdp.type === 'offer') {
-          hostSocketIdRef.current = from;
-          console.log('[Viewer] Received offer from host:', from);
-
-          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          socket.emit('signal', { to: from, data: { sdp: answer } });
-
-          await flushPendingCandidates(pc);
-        } else if (data.candidate) {
-          if (pc.remoteDescription && pc.remoteDescription.type) {
-            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-          } else {
-            console.log('[Viewer] Queuing ICE candidate until remote description is set');
-            pendingCandidatesRef.current.push(data.candidate);
-          }
-        }
-      } catch (e) {
-        console.error('[Viewer] WebRTC error:', e);
-        setConnectionStatus('error');
-        setErrorMessage('WebRTC error: ' + e.message);
-      }
-    });
-
-    socket.on('host-left', () => {
-      console.log('[Viewer] Host disconnected');
-      if (videoRef.current) videoRef.current.srcObject = null;
-      setHasStream(false);
-      setConnectionStatus('disconnected');
-    });
+    peerRef.current = peer;
 
     return () => {
-      socket.disconnect();
+      if (dataConnRef.current) {
+        dataConnRef.current.close();
+        dataConnRef.current = null;
+      }
+      peer.destroy();
       closePeerConnection(pc);
     };
   }, [roomId, retryCount, flushPendingCandidates]);
@@ -166,15 +165,18 @@ export default function ViewerPage() {
   const handleRetry = () => {
     closePeerConnection(pcRef.current);
     pcRef.current = null;
-    if (socketRef.current) {
-      socketRef.current.disconnect();
-      socketRef.current = null;
+    if (peerRef.current) {
+      peerRef.current.destroy();
+      peerRef.current = null;
+    }
+    if (dataConnRef.current) {
+      dataConnRef.current.close();
+      dataConnRef.current = null;
     }
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
     pendingCandidatesRef.current = [];
-    hostSocketIdRef.current = null;
     setHasStream(false);
     setConnectionStatus('connecting');
     setErrorMessage('');

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { io } from 'socket.io-client';
+import { Peer } from 'peer';
 import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Monitor, MonitorStop, Copy, Users, Link as LinkIcon, AlertTriangle, RefreshCw } from 'lucide-react';
@@ -13,26 +13,23 @@ import ErrorAlert from '../components/ErrorAlert';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
 
-const SIGNAL_URL = import.meta.env.VITE_SIGNAL_URL || 'http://localhost:4000';
-console.log('[HostPage] SIGNAL_URL:', SIGNAL_URL);
-console.log('[HostPage] window.location.origin:', window.location.origin);
+// Generate a random 6-character room ID
+function generateRoomId() {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  for (let i = 0; i < 6; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
 
 // Derive the public-facing host for the QR code / join link.
-// When hosted on GitHub Pages, use the deployed URL.
-// When running locally, derive from SIGNAL_URL so LAN peers can reach this machine.
 const PUBLIC_HOST = (() => {
-  // If we're on GitHub Pages, use the current origin (includes /Glimpse base)
   if (window.location.origin.includes('github.io')) {
     return window.location.origin + '/Glimpse';
   }
-  try {
-    const url = new URL(SIGNAL_URL);
-    return `${url.protocol}//${url.hostname}:5173`;
-  } catch {
-    return window.location.origin;
-  }
+  return window.location.origin;
 })();
-console.log('[HostPage] PUBLIC_HOST (for QR code):', PUBLIC_HOST);
 
 export default function HostPage() {
   const [roomId, setRoomId] = useState(null);
@@ -41,45 +38,29 @@ export default function HostPage() {
   const [viewers, setViewers] = useState([]);
   const [errorMessage, setErrorMessage] = useState('');
   const videoRef = useRef(null);
-  const socketRef = useRef(null);
+  const peerRef = useRef(null);
   const streamRef = useRef(null);
-  const peersRef = useRef(new Map());
-  const roomIdRef = useRef(null);
+  const peersRef = useRef(new Map()); // viewerId -> { pc, dataConn }
+  const viewerIdCounter = useRef(0);
 
-  // Keep ref in sync so callbacks always have latest roomId
-  useEffect(() => { roomIdRef.current = roomId; }, [roomId]);
-
-  // Create room on mount
+  // Create room on mount — just generate a local ID, no server needed
   useEffect(() => {
-    let cancelled = false;
-    setRoomLoading(true);
-    console.log('[HostPage] Fetching room from:', `${SIGNAL_URL}/api/create-room`);
-    fetch(`${SIGNAL_URL}/api/create-room`)
-      .then((r) => r.json())
-      .then(({ roomId }) => {
-        console.log('[HostPage] Room created:', roomId);
-        if (!cancelled) {
-          setRoomId(roomId);
-          setRoomLoading(false);
-        }
-      })
-      .catch((err) => {
-        console.error('[HostPage] Failed to create room:', err);
-        if (!cancelled) {
-          setRoomLoading(false);
-          setErrorMessage('Failed to create a room. Is the server running?');
-        }
-      });
-    return () => { cancelled = true; };
+    const id = generateRoomId();
+    console.log('[HostPage] Generated room ID:', id);
+    setRoomId(id);
+    setRoomLoading(false);
   }, []);
 
   // Helper to create a peer connection for a viewer
-  const createPeerForViewer = useCallback(async (viewerId, socket) => {
+  const createPeerForViewer = useCallback(async (viewerId, dataConn) => {
     console.log('[Host] Creating peer connection for viewer:', viewerId);
 
     const pc = createPeerConnection({
       onIceCandidate: (candidate) => {
-        socket.emit('signal', { to: viewerId, data: { candidate } });
+        // Send ICE candidate to viewer via PeerJS data channel
+        if (dataConn && dataConn.open) {
+          dataConn.send(JSON.stringify({ type: 'candidate', candidate }));
+        }
       },
       onTrack: null, // host doesn't receive tracks
       onIceStateChange: (state) => {
@@ -88,7 +69,9 @@ export default function HostPage() {
       onIceFailure: () => {
         console.warn(`[Host] ICE failed for viewer ${viewerId}, attempting restart`);
         restartIce(pc).then((offer) => {
-          socket.emit('signal', { to: viewerId, data: { sdp: offer } });
+          if (dataConn && dataConn.open) {
+            dataConn.send(JSON.stringify({ type: 'offer', sdp: offer }));
+          }
         }).catch((e) => {
           console.error('[Host] ICE restart failed, closing peer:', e);
           closePeerConnection(pc);
@@ -100,14 +83,13 @@ export default function HostPage() {
         console.log('[Host] Negotiation needed for viewer:', viewerId);
         const offer = await p.createOffer();
         await p.setLocalDescription(offer);
-        socket.emit('signal', { to: viewerId, data: { sdp: offer } });
+        if (dataConn && dataConn.open) {
+          dataConn.send(JSON.stringify({ type: 'offer', sdp: offer }));
+        }
       },
     });
 
-    // If stream already exists, add tracks directly (preferred approach).
-    // If no stream yet, add sendonly transceivers so SDP exchange happens immediately.
-    // This prevents black screen: viewer's PC gets video receiver set up early,
-    // and when tracks are added later, renegotiation just updates codec params.
+    // Set up transceivers early to prevent black screen
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => pc.addTrack(t, streamRef.current));
     } else {
@@ -115,71 +97,96 @@ export default function HostPage() {
       pc.addTransceiver('audio', { direction: 'sendonly' });
     }
 
-    peersRef.current.set(viewerId, pc);
+    peersRef.current.set(viewerId, { pc, dataConn });
 
-    // Always create initial offer — establishes SDP so renegotiation works later
+    // Create initial offer
     try {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      socket.emit('signal', { to: viewerId, data: { sdp: offer } });
+      if (dataConn && dataConn.open) {
+        dataConn.send(JSON.stringify({ type: 'offer', sdp: offer }));
+      }
     } catch (e) {
       console.error('[Host] Error creating initial offer for viewer:', viewerId, e);
     }
   }, []);
 
-  // Socket + WebRTC setup
+  // PeerJS setup
   useEffect(() => {
     if (!roomId) return;
-    console.log('[HostPage] Connecting socket to:', SIGNAL_URL);
-    const socket = io(SIGNAL_URL, {
-      transports: ['websocket', 'polling'],
-    });
-    socketRef.current = socket;
 
-    // Wait for connection before emitting host-join
-    socket.on('connect', () => {
-      console.log('[HostPage] Socket connected, id:', socket.id);
-      socket.emit('host-join', { roomId });
+    console.log('[HostPage] Creating Peer with ID:', roomId);
+    const peer = new Peer(roomId, {
+      // Uses default cloud broker at 0.peerjs.com
     });
 
-    socket.on('connect_error', (err) => {
-      console.error('[HostPage] Socket connect error:', err.message);
-      setErrorMessage('Failed to connect to signaling server.');
+    peer.on('open', (id) => {
+      console.log('[HostPage] Peer opened with ID:', id);
     });
 
-    socket.on('viewer-joined', async ({ viewerId }) => {
-      console.log('Viewer joined:', viewerId);
-      setViewers((prev) => [...prev, viewerId]);
-      await createPeerForViewer(viewerId, socket);
-    });
+    peer.on('connection', (dataConn) => {
+      const viewerId = `viewer-${++viewerIdCounter.current}`;
+      console.log('[HostPage] Viewer connected via PeerJS:', viewerId);
 
-    socket.on('signal', async ({ from, data }) => {
-      const pc = peersRef.current.get(from);
-      if (!pc) {
-        console.warn('[Host] Signal for unknown peer:', from);
-        return;
-      }
-      try {
-        if (data.sdp && data.sdp.type === 'answer') {
-          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-        } else if (data.candidate) {
-          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+      // Handle incoming messages from viewer
+      dataConn.on('data', (data) => {
+        try {
+          const msg = typeof data === 'string' ? JSON.parse(data) : data;
+          console.log('[Host] Received from viewer:', msg.type);
+
+          const entry = peersRef.current.get(viewerId);
+          if (!entry) return;
+
+          const { pc } = entry;
+
+          if (msg.type === 'answer' && msg.sdp) {
+            pc.setRemoteDescription(new RTCSessionDescription(msg.sdp)).catch((e) => {
+              console.error('[Host] Error setting remote description:', e);
+            });
+          } else if (msg.type === 'candidate' && msg.candidate) {
+            pc.addIceCandidate(new RTCIceCandidate(msg.candidate)).catch((e) => {
+              console.warn('[Host] Error adding ICE candidate:', e);
+            });
+          }
+        } catch (e) {
+          console.error('[Host] Error processing viewer message:', e);
         }
-      } catch (e) {
-        console.error('[Host] WebRTC signal error:', e);
+      });
+
+      dataConn.on('open', () => {
+        console.log('[Host] Data channel open for viewer:', viewerId);
+        setViewers((prev) => [...prev, viewerId]);
+        createPeerForViewer(viewerId, dataConn);
+      });
+
+      dataConn.on('close', () => {
+        console.log('[Host] Viewer disconnected:', viewerId);
+        const entry = peersRef.current.get(viewerId);
+        if (entry) {
+          closePeerConnection(entry.pc);
+          peersRef.current.delete(viewerId);
+        }
+        setViewers((prev) => prev.filter((id) => id !== viewerId));
+      });
+    });
+
+    peer.on('error', (err) => {
+      console.error('[HostPage] Peer error:', err);
+      // If ID is taken, regenerate
+      if (err.type === 'unavailable-id') {
+        const newId = generateRoomId();
+        console.log('[HostPage] ID taken, regenerating:', newId);
+        setRoomId(newId);
+      } else {
+        setErrorMessage('Peer connection error: ' + err.message);
       }
     });
 
-    socket.on('viewer-left', ({ viewerId }) => {
-      closePeerConnection(peersRef.current.get(viewerId));
-      peersRef.current.delete(viewerId);
-      setViewers((prev) => prev.filter((id) => id !== viewerId));
-    });
+    peerRef.current = peer;
 
     return () => {
-      socket.disconnect();
-      // Clean up all peer connections
-      peersRef.current.forEach((pc) => closePeerConnection(pc));
+      peer.destroy();
+      peersRef.current.forEach((entry) => closePeerConnection(entry.pc));
       peersRef.current.clear();
     };
   }, [roomId, createPeerForViewer]);
@@ -199,9 +206,8 @@ export default function HostPage() {
       setStatus('sharing');
       stream.getVideoTracks()[0].onended = () => stopSharing();
 
-      // Add tracks to all existing peer connections.
-      // Use replaceTrack on existing senders when possible to avoid duplicate transceivers.
-      peersRef.current.forEach((pc, viewerId) => {
+      // Add tracks to all existing peer connections
+      peersRef.current.forEach(({ pc }, viewerId) => {
         console.log('[Host] Adding tracks to existing peer for viewer:', viewerId);
         const senders = pc.getSenders();
         stream.getTracks().forEach((track) => {
@@ -246,7 +252,6 @@ export default function HostPage() {
   };
 
   const joinUrl = roomId ? `${PUBLIC_HOST}/join/${roomId}` : '';
-  console.log('[HostPage] joinUrl (QR code value):', joinUrl);
 
   // Room creation loading state
   if (roomLoading) {
