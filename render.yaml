@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: glimpse-signaling-server
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    workingDirectory: ./server
+    envVars:
+      - key: PORT
+        value: "4000"
+      - key: NODE_VERSION
+        value: "20"

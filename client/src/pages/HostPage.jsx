@@ -17,9 +17,14 @@ const SIGNAL_URL = import.meta.env.VITE_SIGNAL_URL || 'http://localhost:4000';
 console.log('[HostPage] SIGNAL_URL:', SIGNAL_URL);
 console.log('[HostPage] window.location.origin:', window.location.origin);
 
-// Derive the public-facing host from SIGNAL_URL (LAN IP) for the QR code,
-// so phones on the same network can reach this machine instead of localhost.
+// Derive the public-facing host for the QR code / join link.
+// When hosted on GitHub Pages, use the deployed URL.
+// When running locally, derive from SIGNAL_URL so LAN peers can reach this machine.
 const PUBLIC_HOST = (() => {
+  // If we're on GitHub Pages, use the current origin (includes /Glimpse base)
+  if (window.location.origin.includes('github.io')) {
+    return window.location.origin + '/Glimpse';
+  }
   try {
     const url = new URL(SIGNAL_URL);
     return `${url.protocol}//${url.hostname}:5173`;

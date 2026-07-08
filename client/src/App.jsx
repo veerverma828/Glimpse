@@ -5,7 +5,7 @@ import ViewerPage from './pages/ViewerPage';
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename="/Glimpse">
       <Toaster
         position="bottom-center"
         toastOptions={{
