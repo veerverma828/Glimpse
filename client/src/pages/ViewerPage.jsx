@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { Peer } from 'peer';
+import Peer from 'peerjs';
 import { motion, AnimatePresence } from 'framer-motion';
 import { WifiOff, Monitor, RefreshCw } from 'lucide-react';
 import { createPeerConnection, closePeerConnection } from '../hooks/useWebRTC';

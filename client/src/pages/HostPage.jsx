@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Peer } from 'peer';
+import Peer from 'peerjs';
 import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Monitor, MonitorStop, Copy, Users, Link as LinkIcon, AlertTriangle, RefreshCw } from 'lucide-react';
