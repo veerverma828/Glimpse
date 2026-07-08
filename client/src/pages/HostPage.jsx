@@ -23,17 +23,96 @@ function generateRoomId() {
   return result;
 }
 
-// Derive the public-facing host for the QR code / join link.
-const PUBLIC_HOST = (() => {
+/**
+ * Attempt to discover the machine's LAN IP using an ephemeral RTCPeerConnection.
+ * This is a well-known technique: ICE candidates often contain the local IP.
+ * Falls back to window.location.origin if detection fails or times out (2s).
+ */
+function discoverLanIp() {
+  return new Promise((resolve) => {
+    const fallback = () => resolve(window.location.origin);
+
+    try {
+      const pc = new RTCPeerConnection({ iceServers: [] });
+      pc.createDataChannel('');
+      pc.createOffer()
+        .then((offer) => pc.setLocalDescription(offer))
+        .catch(fallback);
+
+      let resolved = false;
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          pc.close();
+          fallback();
+        }
+      }, 2000);
+
+      pc.onicecandidate = (e) => {
+        if (!e.candidate || resolved) return;
+        const ipMatch = e.candidate.candidate.match(/(\d+\.\d+\.\d+\.\d+)/);
+        if (ipMatch) {
+          const ip = ipMatch[1];
+          // Ignore localhost and 0.x.x.x addresses
+          if (ip !== '127.0.0.1' && !ip.startsWith('0.')) {
+            resolved = true;
+            clearTimeout(timeout);
+            pc.close();
+            const { port, protocol } = window.location;
+            resolve(`${protocol}//${ip}${port ? ':' + port : ''}`);
+          }
+        }
+      };
+
+      pc.onicegatheringstatechange = () => {
+        if (pc.iceGatheringState === 'complete' && !resolved) {
+          resolved = true;
+          clearTimeout(timeout);
+          pc.close();
+          fallback();
+        }
+      };
+    } catch {
+      fallback();
+    }
+  });
+}
+
+/**
+ * Resolve the public-facing host for the QR code / join link.
+ * - For GitHub Pages deployments, use the full origin with repo path.
+ * - For local dev (localhost/127.0.0.1/0.0.0.0), attempt LAN IP discovery
+ *   so the QR code works when scanned from other devices on the network.
+ * - Otherwise, use window.location.origin as-is.
+ */
+async function resolvePublicHost() {
   if (window.location.origin.includes('github.io')) {
     return window.location.origin + '/Glimpse';
   }
+
+  const { hostname } = window.location;
+  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0';
+
+  if (isLocalhost) {
+    const lanIp = await discoverLanIp();
+    console.log('[HostPage] Resolved public host:', lanIp);
+    return lanIp;
+  }
+
   return window.location.origin;
-})();
+}
 
 export default function HostPage() {
   const [roomId, setRoomId] = useState(null);
   const [roomLoading, setRoomLoading] = useState(true);
+  // Start with the current origin so the QR code renders immediately,
+  // then update to the LAN IP once discovered (for mobile scanning).
+  const [publicHost, setPublicHost] = useState(() => {
+    if (window.location.origin.includes('github.io')) {
+      return window.location.origin + '/Glimpse';
+    }
+    return window.location.origin;
+  });
   const [status, setStatus] = useState('idle'); // idle | sharing | error
   const [viewers, setViewers] = useState([]);
   const [errorMessage, setErrorMessage] = useState('');
@@ -49,6 +128,11 @@ export default function HostPage() {
     console.log('[HostPage] Generated room ID:', id);
     setRoomId(id);
     setRoomLoading(false);
+  }, []);
+
+  // Resolve the public host (LAN IP if localhost) on mount
+  useEffect(() => {
+    resolvePublicHost().then(setPublicHost);
   }, []);
 
   // Helper to create a peer connection for a viewer
@@ -251,7 +335,12 @@ export default function HostPage() {
     }
   };
 
-  const joinUrl = roomId ? `${PUBLIC_HOST}/join/${roomId}` : '';
+  // Build the full join URL including the Vite base path (/Glimpse)
+  // import.meta.env.BASE_URL includes trailing slash, e.g. "/Glimpse/"
+  const basePath = import.meta.env.BASE_URL || '/';
+  const joinUrl = roomId && publicHost
+    ? `${publicHost}${basePath}join/${roomId}`
+    : '';
 
   // Room creation loading state
   if (roomLoading) {
