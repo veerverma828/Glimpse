@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
-import { Copy, Check, ScreenShare, Square, MonitorX } from 'lucide-react'
+import { Copy, Check, ScreenShare, Square, MonitorX, Volume2, VolumeX, Maximize, Minimize, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import useWebRTC from '../hooks/useWebRTC'
+import useFullscreen from '../hooks/useFullscreen'
 import { generateRoomId, roomIdToPeerId } from '../lib/roomId'
 import Card from '../components/Card'
 import Button from '../components/Button'
@@ -10,6 +11,7 @@ import StatusBadge from '../components/StatusBadge'
 import ErrorAlert from '../components/ErrorAlert'
 import SignalPulse from '../components/SignalPulse'
 import EmptyState from '../components/EmptyState'
+import QualitySlider from '../components/QualitySlider'
 
 function buildJoinUrl(roomId) {
   const base = window.location.origin + import.meta.env.BASE_URL
@@ -20,6 +22,47 @@ const isLocalHostname = ['localhost', '127.0.0.1', '0.0.0.0', ''].includes(
   window.location.hostname
 )
 
+// slider goes 0 (max speed: low res, high fps, low bitrate) to 100 (max
+// quality: high res, capped fps, richer encode). Values in between are
+// linearly interpolated so the user can land anywhere on the tradeoff.
+const SPEED_END = {
+  frameRate: { ideal: 30, max: 30 },
+  width: { ideal: 1280 },
+  height: { ideal: 720 },
+  maxBitrate: 1_500_000,
+}
+const QUALITY_END = {
+  frameRate: { ideal: 15, max: 20 },
+  width: { ideal: 1920 },
+  height: { ideal: 1080 },
+  maxBitrate: 6_000_000,
+}
+
+const lerp = (a, b, t) => Math.round(a + (b - a) * t)
+
+function presetForValue(value) {
+  const t = value / 100
+  return {
+    frameRate: {
+      ideal: lerp(SPEED_END.frameRate.ideal, QUALITY_END.frameRate.ideal, t),
+      max: lerp(SPEED_END.frameRate.max, QUALITY_END.frameRate.max, t),
+    },
+    width: { ideal: lerp(SPEED_END.width.ideal, QUALITY_END.width.ideal, t) },
+    height: { ideal: lerp(SPEED_END.height.ideal, QUALITY_END.height.ideal, t) },
+    contentHint: value >= 50 ? 'detail' : 'motion',
+    maxBitrate: lerp(SPEED_END.maxBitrate, QUALITY_END.maxBitrate, t),
+  }
+}
+
+function applyBitrateCap(peerConnection, maxBitrate) {
+  const sender = peerConnection?.getSenders?.().find((s) => s.track?.kind === 'video')
+  if (!sender) return
+  const params = sender.getParameters()
+  if (!params.encodings?.length) params.encodings = [{}]
+  params.encodings[0].maxBitrate = maxBitrate
+  sender.setParameters(params).catch(() => {})
+}
+
 export default function HostPage() {
   const [roomId, setRoomId] = useState(() => generateRoomId())
   const { peer, status: peerStatus, error: peerError } = useWebRTC(roomIdToPeerId(roomId))
@@ -29,8 +72,20 @@ export default function HostPage() {
   const [isSharing, setIsSharing] = useState(false)
   const [shareError, setShareError] = useState(null)
   const [copied, setCopied] = useState(false)
+  const [qualityValue, setQualityValue] = useState(100)
   const localStreamRef = useRef(null)
   const videoRef = useRef(null)
+  const qualityValueRef = useRef(qualityValue)
+  qualityValueRef.current = qualityValue
+
+  // viewer sharing their screen back to us
+  const [incomingCall, setIncomingCall] = useState(null)
+  const [incomingStream, setIncomingStream] = useState(null)
+  const [incomingMuted, setIncomingMuted] = useState(true)
+  const incomingVideoRef = useRef(null)
+  const incomingContainerRef = useRef(null)
+  const { isFullscreen: incomingFullscreen, toggleFullscreen: toggleIncomingFullscreen, supported: incomingFullscreenSupported } =
+    useFullscreen(incomingContainerRef, incomingVideoRef)
 
   // room id already in use -> mint a new one and let the hook re-init
   useEffect(() => {
@@ -51,6 +106,10 @@ export default function HostPage() {
         toast.success('A viewer joined')
         if (localStreamRef.current) {
           const outgoingCall = peer.call(conn.peer, localStreamRef.current)
+          applyBitrateCap(
+            outgoingCall.peerConnection,
+            presetForValue(qualityValueRef.current).maxBitrate
+          )
           setCall(outgoingCall)
         }
       })
@@ -59,6 +118,34 @@ export default function HostPage() {
     peer.on('connection', onConnection)
     return () => peer.off('connection', onConnection)
   }, [peer])
+
+  // receive a viewer sharing their own screen back to us
+  useEffect(() => {
+    if (!peer) return undefined
+
+    const onCall = (call) => {
+      call.answer()
+      call.on('stream', (stream) => {
+        setIncomingCall(call)
+        setIncomingStream(stream)
+        setIncomingMuted(true)
+        toast.success("Viewer's screen is streaming in")
+      })
+      call.on('close', () => {
+        setIncomingCall(null)
+        setIncomingStream(null)
+      })
+    }
+
+    peer.on('call', onCall)
+    return () => peer.off('call', onCall)
+  }, [peer])
+
+  const stopWatchingIncoming = useCallback(() => {
+    incomingCall?.close()
+    setIncomingCall(null)
+    setIncomingStream(null)
+  }, [incomingCall])
 
   const stopSharing = useCallback(() => {
     localStreamRef.current?.getTracks().forEach((t) => t.stop())
@@ -72,7 +159,12 @@ export default function HostPage() {
   const startSharing = useCallback(async () => {
     setShareError(null)
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
+      const preset = presetForValue(qualityValue)
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: preset.frameRate, width: preset.width, height: preset.height },
+        audio: true,
+      })
+      stream.getVideoTracks()[0].contentHint = preset.contentHint
       localStreamRef.current = stream
       setIsSharing(true)
 
@@ -80,6 +172,7 @@ export default function HostPage() {
 
       if (peer && viewerConn?.open) {
         const outgoingCall = peer.call(viewerConn.peer, stream)
+        applyBitrateCap(outgoingCall.peerConnection, preset.maxBitrate)
         setCall(outgoingCall)
       }
     } catch (err) {
@@ -91,7 +184,7 @@ export default function HostPage() {
         setShareError('Could not start screen sharing. Please try again.')
       }
     }
-  }, [peer, viewerConn, stopSharing])
+  }, [peer, viewerConn, stopSharing, qualityValue])
 
   useEffect(() => stopSharing, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -102,6 +195,27 @@ export default function HostPage() {
       videoRef.current.srcObject = localStreamRef.current
     }
   }, [isSharing])
+
+  const commitQuality = (value) => {
+    const preset = presetForValue(value)
+    // live-switch an already-running share without restarting capture
+    const track = localStreamRef.current?.getVideoTracks()[0]
+    if (track) {
+      track.applyConstraints({ frameRate: preset.frameRate, width: preset.width, height: preset.height }).catch(() => {})
+      track.contentHint = preset.contentHint
+    }
+    if (call?.peerConnection) {
+      applyBitrateCap(call.peerConnection, preset.maxBitrate)
+    }
+  }
+
+  // attach the viewer's incoming stream once the overlay's <video> mounts
+  useEffect(() => {
+    if (incomingStream && incomingVideoRef.current) {
+      incomingVideoRef.current.srcObject = incomingStream
+      incomingVideoRef.current.play().catch(() => {})
+    }
+  }, [incomingStream])
 
   const joinUrl = buildJoinUrl(roomId)
 
@@ -122,6 +236,10 @@ export default function HostPage() {
           : peerStatus === 'ready'
             ? 'waiting'
             : 'connecting'
+
+  const qualityToggle = (
+    <QualitySlider value={qualityValue} onChange={setQualityValue} onCommit={commitQuality} />
+  )
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 pb-12 sm:px-8 sm:pb-16">
@@ -146,6 +264,7 @@ export default function HostPage() {
               </div>
               <ErrorAlert message={peerError} className="w-full max-w-sm" />
               <ErrorAlert message={shareError} title="Couldn't start sharing" className="w-full max-w-sm" />
+              {qualityToggle}
               <Button
                 size="lg"
                 onClick={startSharing}
@@ -170,6 +289,7 @@ export default function HostPage() {
                 </span>
               </div>
               <StatusBadge status={status} />
+              {qualityToggle}
               <Button variant="danger" size="lg" onClick={stopSharing} className="w-full max-w-xs">
                 <Square className="h-4 w-4" strokeWidth={2.25} />
                 Stop sharing
@@ -222,6 +342,49 @@ export default function HostPage() {
           )}
         </Card>
       </div>
+
+      {incomingStream && (
+        <div
+          ref={incomingContainerRef}
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-void"
+        >
+          <video
+            ref={incomingVideoRef}
+            autoPlay
+            playsInline
+            muted={incomingMuted}
+            className="h-full w-full object-contain"
+          />
+          <span className="absolute left-4 top-4 flex items-center gap-1.5 rounded-full bg-void/70 px-2.5 py-1 text-[11px] font-medium text-danger backdrop-blur">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-danger" /> VIEWER'S SCREEN
+          </span>
+          <div className="absolute bottom-4 right-4 flex items-center gap-2">
+            <button
+              onClick={() => setIncomingMuted((m) => !m)}
+              className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-void/70 text-text backdrop-blur transition-colors hover:border-border-strong active:scale-95"
+              aria-label={incomingMuted ? 'Unmute' : 'Mute'}
+            >
+              {incomingMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+            </button>
+            {incomingFullscreenSupported && (
+              <button
+                onClick={toggleIncomingFullscreen}
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-void/70 text-text backdrop-blur transition-colors hover:border-border-strong active:scale-95"
+                aria-label={incomingFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+              >
+                {incomingFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+              </button>
+            )}
+            <button
+              onClick={stopWatchingIncoming}
+              className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-void/70 text-danger backdrop-blur transition-colors hover:border-border-strong active:scale-95"
+              aria-label="Stop viewing"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
