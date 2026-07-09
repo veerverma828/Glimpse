@@ -254,8 +254,8 @@ export default function HostPage() {
         </p>
       </section>
 
-      <div className="grid flex-1 gap-5 sm:gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-        <Card className="flex flex-col items-center justify-center gap-5 p-5 sm:gap-6 sm:p-8 lg:p-10" glow={isSharing}>
+      <div className="grid min-w-0 flex-1 gap-5 sm:gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+        <Card className="flex min-w-0 flex-col items-center justify-center gap-5 p-5 sm:gap-6 sm:p-8 lg:p-10" glow={isSharing}>
           {!isSharing ? (
             <>
               <SignalPulse active={peerStatus === 'ready'} tone={viewerConn?.open ? 'cyan' : 'violet'} />
@@ -298,7 +298,7 @@ export default function HostPage() {
           )}
         </Card>
 
-        <Card className="flex flex-col gap-5 p-5 sm:gap-6 sm:p-8 lg:p-10">
+        <Card className="flex min-w-0 flex-col gap-5 p-5 sm:gap-6 sm:p-8 lg:p-10">
           <div>
             <p className="text-xs font-medium uppercase tracking-wider text-muted">Room code</p>
             <p className="mt-1.5 font-mono text-2xl font-medium tracking-[0.15em] text-text sm:text-3xl">{roomId}</p>
