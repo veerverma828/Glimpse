@@ -39,6 +39,69 @@ export default function ViewerPage() {
     conn.on('error', () => setHostConnStatus('not-found'))
     conn.on('close', () => setStreamEnded(true))
 
+    // The host may be running the native Android app (see
+    // client/src/lib/nativeScreenCapture.js) rather than a browser, in
+    // which case its screen-share offer arrives as a plain SDP payload
+    // over this data connection instead of through peer.call(). We answer
+    // it with an ordinary RTCPeerConnection; from the host's native side
+    // this looks like a normal WebRTC peer, no PeerJS server involvement
+    // needed for this leg since PeerJS was only used to find each other
+    // and open this data channel.
+    let nativePeerConnection = null
+    const onNativeSignal = async (msg) => {
+      if (!msg || typeof msg !== 'object') return
+
+      if (msg.type === 'native-offer') {
+        try {
+          nativePeerConnection = new RTCPeerConnection({
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+          })
+          nativePeerConnection.ontrack = (event) => {
+            const [remoteStream] = event.streams
+            remoteStreamRef.current = remoteStream
+            setHasStream(true)
+            setStreamEnded(false)
+          }
+          nativePeerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+              conn.send({
+                type: 'native-ice-from-remote',
+                sdpMid: event.candidate.sdpMid,
+                sdpMLineIndex: event.candidate.sdpMLineIndex,
+                candidate: event.candidate.candidate,
+              })
+            }
+          }
+          nativePeerConnection.onconnectionstatechange = () => {
+            if (nativePeerConnection.connectionState === 'disconnected' ||
+                nativePeerConnection.connectionState === 'failed' ||
+                nativePeerConnection.connectionState === 'closed') {
+              setHasStream(false)
+              setStreamEnded(true)
+            }
+          }
+
+          await nativePeerConnection.setRemoteDescription({ type: 'offer', sdp: msg.sdp })
+          const answer = await nativePeerConnection.createAnswer()
+          await nativePeerConnection.setLocalDescription(answer)
+          conn.send({ type: 'native-answer', sdp: answer.sdp })
+        } catch (err) {
+          conn.send({ type: 'native-error', message: err.message })
+        }
+      } else if (msg.type === 'native-ice' && nativePeerConnection) {
+        try {
+          await nativePeerConnection.addIceCandidate({
+            sdpMid: msg.sdpMid,
+            sdpMLineIndex: msg.sdpMLineIndex,
+            candidate: msg.candidate,
+          })
+        } catch {
+          // stale/duplicate candidates are safe to ignore
+        }
+      }
+    }
+    conn.on('data', onNativeSignal)
+
     const onCall = (call) => {
       call.answer()
       call.on('stream', (remoteStream) => {
@@ -71,6 +134,8 @@ export default function ViewerPage() {
     return () => {
       clearTimeout(failTimer)
       peer.off('call', onCall)
+      conn.off('data', onNativeSignal)
+      nativePeerConnection?.close()
       conn.close()
     }
   }, [peer, peerStatus, roomId])

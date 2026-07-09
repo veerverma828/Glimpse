@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Glimpse</string>
+    <string name="title_activity_main">Glimpse</string>
+    <string name="package_name">com.veerverma.glimpse</string>
+    <string name="custom_url_scheme">com.veerverma.glimpse</string>
+</resources>

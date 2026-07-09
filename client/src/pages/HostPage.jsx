@@ -5,6 +5,7 @@ import toast from 'react-hot-toast'
 import useWebRTC from '../hooks/useWebRTC'
 import useFullscreen from '../hooks/useFullscreen'
 import { generateRoomId, roomIdToPeerId } from '../lib/roomId'
+import { isNativeApp, startNativeScreenShare, stopNativeScreenShare } from '../lib/nativeScreenCapture'
 import Card from '../components/Card'
 import Button from '../components/Button'
 import StatusBadge from '../components/StatusBadge'
@@ -77,6 +78,7 @@ export default function HostPage() {
   const videoRef = useRef(null)
   const qualityValueRef = useRef(qualityValue)
   qualityValueRef.current = qualityValue
+  const nativeShareRef = useRef(null)
 
   // viewer sharing their screen back to us
   const [incomingCall, setIncomingCall] = useState(null)
@@ -151,6 +153,12 @@ export default function HostPage() {
     localStreamRef.current?.getTracks().forEach((t) => t.stop())
     localStreamRef.current = null
     if (videoRef.current) videoRef.current.srcObject = null
+    if (nativeShareRef.current) {
+      nativeShareRef.current.stop().catch(() => {})
+      nativeShareRef.current = null
+    } else {
+      stopNativeScreenShare().catch(() => {})
+    }
     call?.close()
     setCall(null)
     setIsSharing(false)
@@ -158,6 +166,54 @@ export default function HostPage() {
 
   const startSharing = useCallback(async () => {
     setShareError(null)
+
+    // Native path: running inside the packaged Android app, where Chrome's
+    // getDisplayMedia() doesn't exist at all (deliberately hidden on
+    // Android since Chrome 88 -- not a bug or permissions issue). Use the
+    // native MediaProjection-backed capture instead, relayed through the
+    // existing viewer DataConnection. See lib/nativeScreenCapture.js.
+    if (isNativeApp) {
+      if (!viewerConn?.open) {
+        setShareError('Waiting for a viewer to join before sharing can start.')
+        return
+      }
+      try {
+        const handle = await startNativeScreenShare(viewerConn, {
+          onError: (message) => {
+            setShareError(message)
+            setIsSharing(false)
+            nativeShareRef.current = null
+          },
+          onStopped: () => {
+            setIsSharing(false)
+            nativeShareRef.current = null
+          },
+        })
+        nativeShareRef.current = handle
+        setIsSharing(true)
+      } catch (err) {
+        setShareError(err.message || 'Failed to start native screen sharing')
+      }
+      return
+    }
+
+    if (typeof navigator.mediaDevices?.getDisplayMedia !== 'function') {
+      if (!window.isSecureContext) {
+        setShareError(
+          'This page is not a fully-trusted secure origin, so the browser hides screen capture. Open it over HTTPS with a certificate your phone trusts (a self-signed / bypassed cert is not enough).'
+        )
+      } else if (!navigator.mediaDevices) {
+        setShareError(
+          'Your browser exposes no media APIs on this page. Make sure the URL is HTTPS and the certificate is fully trusted (green padlock, no warning).'
+        )
+      } else {
+        setShareError(
+          "This browser doesn't implement screen capture. On Android, use the latest Chrome; iOS Safari can't screen-share at all."
+        )
+      }
+      return
+    }
+
     try {
       const preset = presetForValue(qualityValue)
       const stream = await navigator.mediaDevices.getDisplayMedia({
