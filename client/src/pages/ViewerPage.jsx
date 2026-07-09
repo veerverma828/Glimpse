@@ -279,17 +279,17 @@ export default function ViewerPage() {
           {isSharingBack ? (
             <button
               onClick={stopSharingBack}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-danger/30 bg-danger/10 px-5 text-sm font-medium text-danger transition-colors hover:border-danger/50"
+              className="inline-flex h-11 w-full max-w-xs items-center justify-center gap-2 rounded-xl border border-danger/30 bg-danger/10 px-4 text-sm font-medium text-danger transition-colors hover:border-danger/50"
             >
-              <Square className="h-4 w-4" strokeWidth={2.25} />
+              <Square className="h-4 w-4 shrink-0" strokeWidth={2.25} />
               Stop sharing your screen
             </button>
           ) : (
             <button
               onClick={startSharingBack}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 px-5 text-sm font-medium text-text transition-colors hover:border-border-strong hover:bg-surface-3"
+              className="inline-flex h-11 w-full max-w-xs items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 px-4 text-sm font-medium text-text transition-colors hover:border-border-strong hover:bg-surface-3"
             >
-              <ScreenShare className="h-4 w-4" strokeWidth={2.25} />
+              <ScreenShare className="h-4 w-4 shrink-0" strokeWidth={2.25} />
               Share your screen with the host
             </button>
           )}
