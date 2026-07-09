@@ -6,7 +6,7 @@ import ViewerPage from './pages/ViewerPage'
 
 function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <Toaster
         position="bottom-center"
         toastOptions={{

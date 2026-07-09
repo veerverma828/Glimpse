@@ -119,21 +119,31 @@ export default function ViewerPage() {
     setIsSharingBack(false)
   }
 
-  // most mobile browsers (Chrome/Safari on iOS and Android) don't implement
-  // getDisplayMedia at all — there's no OS-level screen-capture picker to
-  // hand back a MediaStream, so this is a hard capability check, not a retry
-  const screenShareSupported =
-    typeof navigator.mediaDevices?.getDisplayMedia === 'function'
-
+  // getDisplayMedia is missing on many mobile browsers, but detection is
+  // unreliable (some expose the function yet throw at call time). So don't
+  // block the click on feature-detection — always let the user try, and
+  // surface a clear message only if the actual call fails.
   const startSharingBack = async () => {
     if (!peer || peerStatus !== 'ready') return
-    if (!screenShareSupported) {
-      setShareBackError(
-        "This browser can't capture your screen. Screen sharing from mobile isn't supported by Chrome or Safari yet — try a desktop browser."
-      )
+    setShareBackError(null)
+    if (typeof navigator.mediaDevices?.getDisplayMedia !== 'function') {
+      // distinguish the two real causes: insecure origin (mediaDevices
+      // stripped) vs. a browser that genuinely lacks the API
+      if (!window.isSecureContext) {
+        setShareBackError(
+          'This page is not a fully-trusted secure origin, so the browser hides screen capture. Open it over HTTPS with a certificate your phone trusts (a self-signed / bypassed cert is not enough).'
+        )
+      } else if (!navigator.mediaDevices) {
+        setShareBackError(
+          'Your browser exposes no media APIs on this page. Make sure the URL is HTTPS and the certificate is fully trusted (green padlock, no warning).'
+        )
+      } else {
+        setShareBackError(
+          "This browser doesn't implement screen capture. On Android, use the latest Chrome; iOS Safari can't screen-share at all."
+        )
+      }
       return
     }
-    setShareBackError(null)
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: { ideal: 24, max: 30 } },
@@ -266,11 +276,6 @@ export default function ViewerPage() {
       {hostConnStatus === 'connected' && !streamEnded && (
         <div className="mt-5 flex flex-col items-center gap-2">
           <ErrorAlert message={shareBackError} className="w-full max-w-sm" />
-          {!screenShareSupported && !shareBackError && (
-            <p className="max-w-xs text-center text-xs text-faint">
-              Screen sharing back to the host needs a desktop browser — mobile browsers don't expose a screen-capture API yet.
-            </p>
-          )}
           {isSharingBack ? (
             <button
               onClick={stopSharingBack}
@@ -282,8 +287,7 @@ export default function ViewerPage() {
           ) : (
             <button
               onClick={startSharingBack}
-              disabled={!screenShareSupported}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 px-5 text-sm font-medium text-text transition-colors hover:border-border-strong hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-surface-2"
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 px-5 text-sm font-medium text-text transition-colors hover:border-border-strong hover:bg-surface-3"
             >
               <ScreenShare className="h-4 w-4" strokeWidth={2.25} />
               Share your screen with the host
