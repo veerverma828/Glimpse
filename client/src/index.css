@@ -36,6 +36,16 @@ body {
   padding: 0;
 }
 
+html {
+  /* disable double-tap-to-zoom on links/buttons (mobile Safari/Chrome);
+     pinch-zoom still works fine */
+  touch-action: manipulation;
+  /* stop mobile Chrome/Safari auto-inflating font size ("font boosting"),
+     which was blowing the layout past the viewport on load */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   background: var(--color-void);
   color: var(--color-text);
