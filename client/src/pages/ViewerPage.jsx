@@ -78,17 +78,17 @@ export default function ViewerPage() {
           : 'connecting'
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-5 pb-16 sm:px-8">
-      <section className="mx-auto max-w-xl pt-8 pb-8 text-center sm:pt-14 sm:pb-10">
+    <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pb-12 sm:px-8 sm:pb-16">
+      <section className="mx-auto max-w-xl pt-6 pb-6 text-center sm:pt-14 sm:pb-10">
         <p className="font-mono text-xs uppercase tracking-[0.2em] text-cyan">
           Room <span className="text-text">{roomId}</span>
         </p>
-        <h1 className="mt-4 font-display text-3xl font-semibold tracking-tight text-text sm:text-4xl">
+        <h1 className="mt-3 font-display text-2xl font-semibold tracking-tight text-text sm:mt-4 sm:text-3xl md:text-4xl">
           {hasStream ? 'Now watching' : 'Waiting for the broadcast'}
         </h1>
       </section>
 
-      <Card className="flex flex-1 flex-col items-center justify-center gap-6 p-6 sm:p-10" glow={hasStream}>
+      <Card className="flex flex-1 flex-col items-center justify-center gap-5 p-5 sm:gap-6 sm:p-8 lg:p-10" glow={hasStream}>
         {hasStream && !streamEnded ? (
           <div className="relative w-full overflow-hidden rounded-xl border border-border-strong bg-void">
             <video
@@ -103,7 +103,7 @@ export default function ViewerPage() {
                 setMuted((m) => !m)
                 videoRef.current?.play().catch(() => {})
               }}
-              className="absolute bottom-3 right-3 flex h-10 w-10 items-center justify-center rounded-full border border-border bg-void/70 text-text backdrop-blur transition-colors hover:border-border-strong"
+              className="absolute bottom-3 right-3 flex h-11 w-11 items-center justify-center rounded-full border border-border bg-void/70 text-text backdrop-blur transition-colors hover:border-border-strong active:scale-95"
               aria-label={muted ? 'Unmute' : 'Mute'}
             >
               {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}

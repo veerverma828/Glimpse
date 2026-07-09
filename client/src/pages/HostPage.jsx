@@ -124,20 +124,20 @@ export default function HostPage() {
             : 'connecting'
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-5 pb-16 sm:px-8">
-      <section className="mx-auto max-w-2xl pt-8 pb-10 text-center sm:pt-14 sm:pb-14">
+    <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 pb-12 sm:px-8 sm:pb-16">
+      <section className="mx-auto max-w-2xl pt-6 pb-8 text-center sm:pt-14 sm:pb-14">
         <p className="font-mono text-xs uppercase tracking-[0.2em] text-cyan">Peer to peer &middot; zero setup</p>
-        <h1 className="mt-4 font-display text-4xl font-semibold tracking-tight text-text sm:text-5xl">
+        <h1 className="mt-3 font-display text-3xl font-semibold tracking-tight text-text sm:mt-4 sm:text-4xl md:text-5xl">
           Beam your screen<br className="hidden sm:block" /> to any device
         </h1>
-        <p className="mt-4 text-sm text-muted sm:text-base">
+        <p className="mt-3 text-sm text-muted sm:mt-4 sm:text-base">
           Start broadcasting, share the code, and watch it appear on the other screen in seconds.
           Nothing passes through a server.
         </p>
       </section>
 
-      <div className="grid flex-1 gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-        <Card className="flex flex-col items-center justify-center gap-6 p-8 sm:p-10" glow={isSharing}>
+      <div className="grid flex-1 gap-5 sm:gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+        <Card className="flex flex-col items-center justify-center gap-5 p-5 sm:gap-6 sm:p-8 lg:p-10" glow={isSharing}>
           {!isSharing ? (
             <>
               <SignalPulse active={peerStatus === 'ready'} tone={viewerConn?.open ? 'cyan' : 'violet'} />
@@ -178,10 +178,10 @@ export default function HostPage() {
           )}
         </Card>
 
-        <Card className="flex flex-col gap-6 p-8 sm:p-10">
+        <Card className="flex flex-col gap-5 p-5 sm:gap-6 sm:p-8 lg:p-10">
           <div>
             <p className="text-xs font-medium uppercase tracking-wider text-muted">Room code</p>
-            <p className="mt-1.5 font-mono text-3xl font-medium tracking-[0.15em] text-text">{roomId}</p>
+            <p className="mt-1.5 font-mono text-2xl font-medium tracking-[0.15em] text-text sm:text-3xl">{roomId}</p>
           </div>
 
           {peerStatus === 'ready' ? (
