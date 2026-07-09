@@ -19,8 +19,8 @@ export default function SignalPulse({ active = true, size = 160, tone = 'violet'
         RINGS.map((delay, i) => (
           <motion.span
             key={i}
-            className="absolute rounded-full border"
-            style={{ borderColor: color, width: '30%', height: '30%' }}
+            className="absolute left-1/2 top-1/2 rounded-full border"
+            style={{ borderColor: color, width: '30%', height: '30%', x: '-50%', y: '-50%' }}
             initial={{ opacity: 0.55, scale: 1 }}
             animate={{ opacity: 0, scale: 3.1 }}
             transition={{

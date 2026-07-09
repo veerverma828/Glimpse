@@ -44,6 +44,8 @@ html {
      which was blowing the layout past the viewport on load */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  overflow-x: hidden;
+  max-width: 100vw;
 }
 
 body {
@@ -56,6 +58,12 @@ body {
   min-height: 100svh;
   position: relative;
   overflow-x: hidden;
+  max-width: 100vw;
+}
+
+#root {
+  overflow-x: hidden;
+  max-width: 100vw;
 }
 
 /* ambient background: soft void gradient + faint grid */
