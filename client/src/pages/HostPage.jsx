@@ -200,9 +200,9 @@ export default function HostPage() {
 
               <button
                 onClick={copyLink}
-                className="group flex w-full min-w-0 items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-left transition-colors hover:border-border-strong"
+                className="group flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-left transition-colors hover:border-border-strong"
               >
-                <span className="min-w-0 truncate font-mono text-xs text-muted">{joinUrl}</span>
+                <span className="truncate font-mono text-xs text-muted">{joinUrl}</span>
                 <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-violet-light">
                   {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                   {copied ? 'Copied' : 'Copy'}
