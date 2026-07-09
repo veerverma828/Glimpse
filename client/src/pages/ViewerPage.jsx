@@ -163,7 +163,7 @@ export default function ViewerPage() {
       } else if (err.name === 'NotFoundError' || err.name === 'NotSupportedError') {
         setShareBackError("This browser can't share a screen. Try Chrome, Edge, or Firefox on desktop.")
       } else {
-        setShareBackError('Could not start sharing your screen.')
+        setShareBackError(`Could not start sharing your screen: ${err.name || 'Error'} — ${err.message || 'no details'}`)
       }
     }
   }

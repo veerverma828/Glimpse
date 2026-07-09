@@ -181,7 +181,7 @@ export default function HostPage() {
       } else if (err.name === 'NotFoundError' || err.name === 'NotSupportedError') {
         setShareError("This browser can't share a screen. Try Chrome, Edge, or Firefox on desktop.")
       } else {
-        setShareError('Could not start screen sharing. Please try again.')
+        setShareError(`Could not start screen sharing: ${err.name || 'Error'} — ${err.message || 'no details'}`)
       }
     }
   }, [peer, viewerConn, stopSharing, qualityValue])
