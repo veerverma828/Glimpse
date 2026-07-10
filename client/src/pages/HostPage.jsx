@@ -6,6 +6,7 @@ import useWebRTC from '../hooks/useWebRTC'
 import { generateRoomId, roomIdToPeerId } from '../lib/roomId'
 import { isNativeApp, startNativeScreenShare, stopNativeScreenShare } from '../lib/nativeScreenCapture'
 import { controlSupported, isControlServiceEnabled, openControlSettings, applyControl } from '../lib/remoteControl'
+import { presetForValue, applyBitrateCap } from '../lib/qualityPreset'
 import Card from '../components/Card'
 import Button from '../components/Button'
 import StatusBadge from '../components/StatusBadge'
@@ -33,46 +34,6 @@ const isLocalHostname =
   !isNativeApp &&
   ['localhost', '127.0.0.1', '0.0.0.0', ''].includes(window.location.hostname)
 
-// slider goes 0 (max speed: low res, high fps, low bitrate) to 100 (max
-// quality: high res, capped fps, richer encode). Values in between are
-// linearly interpolated so the user can land anywhere on the tradeoff.
-const SPEED_END = {
-  frameRate: { ideal: 30, max: 30 },
-  width: { ideal: 1280 },
-  height: { ideal: 720 },
-  maxBitrate: 1_500_000,
-}
-const QUALITY_END = {
-  frameRate: { ideal: 15, max: 20 },
-  width: { ideal: 1920 },
-  height: { ideal: 1080 },
-  maxBitrate: 6_000_000,
-}
-
-const lerp = (a, b, t) => Math.round(a + (b - a) * t)
-
-function presetForValue(value) {
-  const t = value / 100
-  return {
-    frameRate: {
-      ideal: lerp(SPEED_END.frameRate.ideal, QUALITY_END.frameRate.ideal, t),
-      max: lerp(SPEED_END.frameRate.max, QUALITY_END.frameRate.max, t),
-    },
-    width: { ideal: lerp(SPEED_END.width.ideal, QUALITY_END.width.ideal, t) },
-    height: { ideal: lerp(SPEED_END.height.ideal, QUALITY_END.height.ideal, t) },
-    contentHint: value >= 50 ? 'detail' : 'motion',
-    maxBitrate: lerp(SPEED_END.maxBitrate, QUALITY_END.maxBitrate, t),
-  }
-}
-
-function applyBitrateCap(peerConnection, maxBitrate) {
-  const sender = peerConnection?.getSenders?.().find((s) => s.track?.kind === 'video')
-  if (!sender) return
-  const params = sender.getParameters()
-  if (!params.encodings?.length) params.encodings = [{}]
-  params.encodings[0].maxBitrate = maxBitrate
-  sender.setParameters(params).catch(() => {})
-}
 
 export default function HostPage() {
   const [roomId, setRoomId] = useState(() => generateRoomId())
@@ -252,6 +213,13 @@ export default function HostPage() {
   // shared-back screen)
   const sendControl = (msg) => {
     viewerConnRef.current?.open && viewerConnRef.current.send({ type: 'control', ...msg })
+  }
+
+  // ask the viewer to change the quality of their shared-back stream
+  // (same message type ViewerPage sends us -- meaning is "please adjust
+  // *your* outgoing quality", interpreted by whoever receives it)
+  const requestViewerQuality = (value) => {
+    viewerConnRef.current?.open && viewerConnRef.current.send({ type: 'quality-request', value })
   }
 
   // tell the viewer whether it may remote-control this device
@@ -547,6 +515,7 @@ export default function HostPage() {
               pcRef={incomingPcRef}
               controlAvailable={viewerControlAvailable}
               onControl={sendControl}
+              onRequestQuality={requestViewerQuality}
             />
             <span className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-void/70 px-2.5 py-1 text-[11px] font-medium text-danger backdrop-blur">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-danger" /> VIEWER'S SCREEN

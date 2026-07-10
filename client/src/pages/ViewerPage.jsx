@@ -6,6 +6,7 @@ import useWebRTC from '../hooks/useWebRTC'
 import { roomIdToPeerId } from '../lib/roomId'
 import { isNativeApp, startNativeScreenShare, stopNativeScreenShare } from '../lib/nativeScreenCapture'
 import { controlSupported, isControlServiceEnabled, openControlSettings, applyControl } from '../lib/remoteControl'
+import { presetForValue, applyBitrateCap } from '../lib/qualityPreset'
 import Card from '../components/Card'
 import StatusBadge from '../components/StatusBadge'
 import ErrorAlert from '../components/ErrorAlert'
@@ -141,6 +142,22 @@ export default function ViewerPage() {
       } else if (msg.type === 'control') {
         // host is controlling us (only honored if we opted in)
         if (allowControlRef.current) applyControl(msg)
+      } else if (msg.type === 'quality-request') {
+        // host asked us to adjust our shared-back quality; no-op if we're
+        // not currently sharing back or the native path (no adjustable
+        // constraints/peerConnection hook there, mirrors HostPage's
+        // native-share behavior)
+        const value = Math.max(0, Math.min(100, Number(msg.value) || 0))
+        const preset = presetForValue(value)
+        const track = backStreamRef.current?.getVideoTracks()[0]
+        if (track) {
+          track.applyConstraints({ frameRate: preset.frameRate, width: preset.width, height: preset.height }).catch(() => {})
+          track.contentHint = preset.contentHint
+        }
+        if (backCallRef.current?.peerConnection) {
+          applyBitrateCap(backCallRef.current.peerConnection, preset.maxBitrate)
+        }
+        if (track || backCallRef.current) toast('Host requested a quality change')
       }
     }
     conn.on('data', onNativeSignal)
@@ -316,10 +333,12 @@ export default function ViewerPage() {
       return
     }
     try {
+      const preset = presetForValue(100) // start at max quality, adjustable after via the host's quality-request
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: { ideal: 24, max: 30 } },
+        video: { frameRate: preset.frameRate, width: preset.width, height: preset.height },
         audio: false,
       })
+      stream.getVideoTracks()[0].contentHint = preset.contentHint
       backStreamRef.current = stream
       setIsSharingBack(true)
       stream.getVideoTracks()[0].addEventListener('ended', stopSharingBack)
