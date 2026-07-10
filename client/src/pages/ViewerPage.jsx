@@ -5,7 +5,7 @@ import useWebRTC from '../hooks/useWebRTC'
 import useFullscreen from '../hooks/useFullscreen'
 import { roomIdToPeerId } from '../lib/roomId'
 import { isNativeApp, startNativeScreenShare, stopNativeScreenShare } from '../lib/nativeScreenCapture'
-import { getUnsupportedShareMessage, isShareUnsupportedPermanently } from '../lib/screenShareSupport'
+import { getUnsupportedShareMessage } from '../lib/screenShareSupport'
 import Card from '../components/Card'
 import StatusBadge from '../components/StatusBadge'
 import ErrorAlert from '../components/ErrorAlert'
@@ -294,10 +294,6 @@ export default function ViewerPage() {
           ? 'error'
           : 'connecting'
 
-  // Same reasoning as HostPage's canShare: don't offer "Share your screen
-  // with the host" at all on a platform that can never do it.
-  const canShareBack = isNativeApp || !isShareUnsupportedPermanently()
-
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pb-12 sm:px-8 sm:pb-16">
       <section className="mx-auto max-w-xl pt-6 pb-6 text-center sm:pt-14 sm:pb-10">
@@ -387,7 +383,7 @@ export default function ViewerPage() {
         </p>
       )}
 
-      {hostConnStatus === 'connected' && !streamEnded && canShareBack && (
+      {hostConnStatus === 'connected' && !streamEnded && (
         <div className="mt-5 flex flex-col items-center gap-2">
           <ErrorAlert message={shareBackError} className="w-full max-w-sm" />
           {isSharingBack ? (
