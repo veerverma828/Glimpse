@@ -27,7 +27,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
-    protected void onDestroy() {
+    public void onDestroy() {
         stopService(new Intent(this, KeepAliveService.class));
         super.onDestroy();
     }
