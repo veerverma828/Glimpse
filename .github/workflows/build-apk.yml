@@ -44,21 +44,31 @@ jobs:
       - name: Sync Capacitor Android project
         run: npx cap sync android
 
-      # Debug build: Android auto-signs with a throwaway debug key, so this
-      # needs no secrets and installs fine for sideloading/testing. Switch to
-      # assembleRelease + a real keystore (ANDROID_KEYSTORE_BASE64 etc. as
-      # repo secrets) once this is ready to distribute beyond your own device.
-      - name: Build debug APK
+      # Release build signed with a persistent keystore (repo secrets below).
+      # Same signature every build -> no more "package conflicts with an
+      # existing package" on install. Debug builds sign with a throwaway key
+      # regenerated per CI run, which caused that conflict before.
+      - name: Decode keystore
         working-directory: client/android
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > release.jks
+
+      - name: Build release APK
+        working-directory: client/android
+        env:
+          ORG_GRADLE_PROJECT_androidStoreFile: release.jks
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=$(pwd)/release.jks \
+            -Pandroid.injected.signing.store.password=${{ secrets.ANDROID_KEYSTORE_PASSWORD }} \
+            -Pandroid.injected.signing.key.alias=${{ secrets.ANDROID_KEY_ALIAS }} \
+            -Pandroid.injected.signing.key.password=${{ secrets.ANDROID_KEY_PASSWORD }}
 
       - name: Rename APK with run number
         working-directory: client/android
         run: |
           mkdir -p ../../dist-apk
-          cp app/build/outputs/apk/debug/app-debug.apk \
+          cp app/build/outputs/apk/release/app-release.apk \
              ../../dist-apk/glimpse-${{ github.run_number }}.apk
 
       - name: Upload APK artifact
