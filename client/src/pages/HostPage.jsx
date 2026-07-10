@@ -124,13 +124,74 @@ export default function HostPage() {
           setCall(outgoingCall)
         }
       })
+
+      // Mirrors ViewerPage's onNativeSignal handler: if the *viewer* is
+      // running the native Android app, its "share your screen with the
+      // host" offer arrives as plain SDP over this data connection instead
+      // of a peer.call() (same reason as the host's native path -- Chrome
+      // for Android has no getDisplayMedia()). Answer it with an ordinary
+      // RTCPeerConnection, same as ViewerPage does for the reverse direction.
+      let nativePeerConnection = null
+      const onNativeSignal = async (msg) => {
+        if (!msg || typeof msg !== 'object') return
+
+        if (msg.type === 'native-offer') {
+          try {
+            nativePeerConnection = new RTCPeerConnection({
+              iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+            })
+            nativePeerConnection.ontrack = (event) => {
+              const [remoteStream] = event.streams
+              setIncomingCall({ close: () => nativePeerConnection?.close() })
+              setIncomingStream(remoteStream)
+              setIncomingMuted(true)
+              toast.success("Viewer's screen is streaming in")
+            }
+            nativePeerConnection.onicecandidate = (event) => {
+              if (event.candidate) {
+                conn.send({
+                  type: 'native-ice-from-remote',
+                  sdpMid: event.candidate.sdpMid,
+                  sdpMLineIndex: event.candidate.sdpMLineIndex,
+                  candidate: event.candidate.candidate,
+                })
+              }
+            }
+            nativePeerConnection.onconnectionstatechange = () => {
+              if (['disconnected', 'failed', 'closed'].includes(nativePeerConnection.connectionState)) {
+                setIncomingCall(null)
+                setIncomingStream(null)
+              }
+            }
+
+            await nativePeerConnection.setRemoteDescription({ type: 'offer', sdp: msg.sdp })
+            const answer = await nativePeerConnection.createAnswer()
+            await nativePeerConnection.setLocalDescription(answer)
+            conn.send({ type: 'native-answer', sdp: answer.sdp })
+          } catch (err) {
+            conn.send({ type: 'native-error', message: err.message })
+          }
+        } else if (msg.type === 'native-ice' && nativePeerConnection) {
+          try {
+            await nativePeerConnection.addIceCandidate({
+              sdpMid: msg.sdpMid,
+              sdpMLineIndex: msg.sdpMLineIndex,
+              candidate: msg.candidate,
+            })
+          } catch {
+            // stale/duplicate candidates are safe to ignore
+          }
+        }
+      }
+      conn.on('data', onNativeSignal)
+      conn.on('close', () => nativePeerConnection?.close())
     }
 
     peer.on('connection', onConnection)
     return () => peer.off('connection', onConnection)
   }, [peer])
 
-  // receive a viewer sharing their own screen back to us
+  // receive a viewer sharing their own screen back to us (browser viewer path)
   useEffect(() => {
     if (!peer) return undefined
 
