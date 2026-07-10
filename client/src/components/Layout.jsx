@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import Logo from './Logo'
+import { isNativeApp } from '../lib/nativeScreenCapture'
 
 export default function Layout({ children }) {
   return (
@@ -12,10 +13,12 @@ export default function Layout({ children }) {
           Peer-to-peer &middot; No account needed
         </span>
       </header>
-      <main className="flex flex-1 flex-col">{children}</main>
-      <footer className="px-4 pb-6 pt-2 text-center text-xs text-faint sm:px-8">
-        Streams travel directly between devices. Nothing is recorded or stored.
-      </footer>
+      <main className={`flex flex-1 flex-col ${isNativeApp ? 'pb-14' : ''}`}>{children}</main>
+      {!isNativeApp && (
+        <footer className="px-4 pb-6 pt-2 text-center text-xs text-faint sm:px-8">
+          Streams travel directly between devices. Nothing is recorded or stored.
+        </footer>
+      )}
     </div>
   )
 }

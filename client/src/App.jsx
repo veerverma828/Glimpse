@@ -2,8 +2,11 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import Layout from './components/Layout'
 import UpdateChecker from './components/UpdateChecker'
+import BottomNav from './components/BottomNav'
 import HostPage from './pages/HostPage'
 import ViewerPage from './pages/ViewerPage'
+import AboutPage from './pages/AboutPage'
+import { isNativeApp } from './lib/nativeScreenCapture'
 
 function App() {
   return (
@@ -23,8 +26,10 @@ function App() {
         <Routes>
           <Route path="/" element={<HostPage />} />
           <Route path="/join/:roomId" element={<ViewerPage />} />
+          {isNativeApp && <Route path="/about" element={<AboutPage />} />}
         </Routes>
       </Layout>
+      {isNativeApp && <BottomNav />}
       <UpdateChecker />
     </BrowserRouter>
   )
