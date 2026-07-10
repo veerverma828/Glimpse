@@ -6,7 +6,7 @@ import useWebRTC from '../hooks/useWebRTC'
 import useFullscreen from '../hooks/useFullscreen'
 import { generateRoomId, roomIdToPeerId } from '../lib/roomId'
 import { isNativeApp, startNativeScreenShare, stopNativeScreenShare } from '../lib/nativeScreenCapture'
-import { getUnsupportedShareMessage, isShareUnsupportedPermanently } from '../lib/screenShareSupport'
+import { getUnsupportedShareMessage } from '../lib/screenShareSupport'
 import Card from '../components/Card'
 import Button from '../components/Button'
 import StatusBadge from '../components/StatusBadge'
@@ -366,12 +366,6 @@ export default function HostPage() {
     <QualitySlider value={qualityValue} onChange={setQualityValue} onCommit={commitQuality} />
   )
 
-  // Permanently-unsupported platforms (Android browser, iOS Safari, an old
-  // desktop browser) never get a working "Start sharing" click -- so don't
-  // show the button at all instead of letting them tap it into an error.
-  // Native app is always exempt (it never uses getDisplayMedia at all).
-  const canShare = isNativeApp || !isShareUnsupportedPermanently()
-
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 pb-12 sm:px-8 sm:pb-16">
       <section className="mx-auto max-w-2xl pt-6 pb-8 text-center sm:pt-14 sm:pb-14">
@@ -394,28 +388,22 @@ export default function HostPage() {
                 <StatusBadge status={status} />
               </div>
               <ErrorAlert message={peerError} className="w-full max-w-sm" />
-              {canShare ? (
-                <>
-                  <ErrorAlert message={shareError} title="Couldn't start sharing" className="w-full max-w-sm" />
-                  {qualityToggle}
-                  <Button
-                    size="lg"
-                    onClick={startSharing}
-                    disabled={peerStatus !== 'ready'}
-                    className="w-full max-w-xs"
-                  >
-                    <ScreenShare className="h-4 w-4" strokeWidth={2.25} />
-                    Start sharing
-                  </Button>
-                  <p className="max-w-xs text-center text-xs text-faint">
-                    {viewerConn?.open
-                      ? 'A viewer is connected and ready to watch.'
-                      : 'Share the code on the right so a viewer can join first, or start now — they can join any time.'}
-                  </p>
-                </>
-              ) : (
-                <p className="max-w-xs text-center text-sm text-muted">{getUnsupportedShareMessage()}</p>
-              )}
+              <ErrorAlert message={shareError} title="Couldn't start sharing" className="w-full max-w-sm" />
+              {qualityToggle}
+              <Button
+                size="lg"
+                onClick={startSharing}
+                disabled={peerStatus !== 'ready'}
+                className="w-full max-w-xs"
+              >
+                <ScreenShare className="h-4 w-4" strokeWidth={2.25} />
+                Start sharing
+              </Button>
+              <p className="max-w-xs text-center text-xs text-faint">
+                {viewerConn?.open
+                  ? 'A viewer is connected and ready to watch.'
+                  : 'Share the code on the right so a viewer can join first, or start now — they can join any time.'}
+              </p>
             </>
           ) : (
             <div className="flex w-full flex-col items-center gap-5">

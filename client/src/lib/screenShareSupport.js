@@ -17,14 +17,3 @@ export function getUnsupportedShareMessage() {
 
   return "This browser doesn't implement screen capture. Try the latest Chrome, Edge, or Firefox on desktop."
 }
-
-// True only when the platform itself will never support sharing (Android
-// browser, iOS Safari, an old/unsupported desktop browser) -- not when it's
-// just an HTTP/insecure-origin issue, which is fixable by the user and
-// should still surface as an actionable error on click rather than being
-// silently hidden.
-export function isShareUnsupportedPermanently() {
-  if (!window.isSecureContext) return false
-  if (!navigator.mediaDevices) return false
-  return typeof navigator.mediaDevices.getDisplayMedia !== 'function'
-}
