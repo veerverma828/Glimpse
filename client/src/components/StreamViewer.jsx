@@ -47,9 +47,7 @@ export default function StreamViewer({ stream, pcRef, onRequestQuality, controlA
     useFullscreen(containerRef, videoRef)
 
   const [muted, setMuted] = useState(true)
-  const [rotation, setRotation] = useState(0) // 0 | 90 | 180 | 270
-  const [manualRotate, setManualRotate] = useState(false)
-  const [streamPortrait, setStreamPortrait] = useState(false)
+  const [rotation, setRotation] = useState(0) // 0 | 90 | 180 | 270, manual only
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [fitScale, setFitScale] = useState(1)
@@ -76,36 +74,9 @@ export default function StreamViewer({ stream, pcRef, onRequestQuality, controlA
     }
   }, [stream])
 
-  // track the stream's real aspect so we know when it's portrait
-  useEffect(() => {
-    const video = videoRef.current
-    if (!video) return undefined
-    const update = () => {
-      if (video.videoWidth && video.videoHeight) {
-        setStreamPortrait(video.videoHeight > video.videoWidth)
-      }
-    }
-    video.addEventListener('loadedmetadata', update)
-    video.addEventListener('resize', update)
-    update()
-    return () => {
-      video.removeEventListener('loadedmetadata', update)
-      video.removeEventListener('resize', update)
-    }
-  }, [stream])
-
-  // auto-rotate: a portrait stream shown fullscreen on a landscape display
-  // gets spun 90deg so it fills the screen -- unless the user has taken
-  // manual control of rotation.
-  useEffect(() => {
-    if (manualRotate) return
-    const displayLandscape = window.innerWidth >= window.innerHeight
-    if (isFullscreen && streamPortrait && displayLandscape) {
-      setRotation(90)
-    } else {
-      setRotation(0)
-    }
-  }, [isFullscreen, streamPortrait, manualRotate])
+  // No auto-rotate: fullscreen always opens showing the stream exactly as
+  // captured (portrait stays portrait) -- rotation is manual-only, via the
+  // rotate button below.
 
   // when rotated 90/270 the video's bounding box swaps W/H; scale it down so
   // that rotated box still fits inside the container instead of overflowing
@@ -130,7 +101,6 @@ export default function StreamViewer({ stream, pcRef, onRequestQuality, controlA
   }, [zoom])
 
   const rotate = () => {
-    setManualRotate(true)
     setRotation((r) => (r + 90) % 360)
   }
 
@@ -293,6 +263,19 @@ export default function StreamViewer({ stream, pcRef, onRequestQuality, controlA
     onRequestQuality?.(value)
   }
 
+  // Every overlay control sits inside the same container that owns
+  // pan/control pointer handlers (for panning while zoomed, or sending
+  // gestures while in control mode). Without this, a pointerdown on a
+  // button or the quality slider bubbles up and the container steals
+  // pointer capture out from under it -- the slider thumb looks draggable
+  // but the drag never completes, and buttons can lose their click.
+  const stopOverlayPropagation = {
+    onPointerDown: (e) => e.stopPropagation(),
+    onPointerMove: (e) => e.stopPropagation(),
+    onPointerUp: (e) => e.stopPropagation(),
+    onClick: (e) => e.stopPropagation(),
+  }
+
   const transform =
     `translate(${pan.x}px, ${pan.y}px) rotate(${rotation}deg) scale(${(zoom * fitScale).toFixed(3)})`
 
@@ -329,7 +312,7 @@ export default function StreamViewer({ stream, pcRef, onRequestQuality, controlA
       )}
 
       {controlMode && (
-        <div className="absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-2">
+        <div className="absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-2" {...stopOverlayPropagation}>
           <IconButton label="Back" onClick={() => onControl?.({ action: 'global', name: 'back' })}>
             <ArrowLeft className="h-4 w-4" />
           </IconButton>
@@ -351,7 +334,10 @@ export default function StreamViewer({ stream, pcRef, onRequestQuality, controlA
       )}
 
       {showQuality && (
-        <div className="absolute left-1/2 top-3 flex w-[min(90%,20rem)] -translate-x-1/2 items-center gap-3 rounded-xl bg-void/85 px-4 py-3 backdrop-blur">
+        <div
+          className="absolute left-1/2 top-3 flex w-[min(90%,20rem)] -translate-x-1/2 items-center gap-3 rounded-xl bg-void/85 px-4 py-3 backdrop-blur"
+          {...stopOverlayPropagation}
+        >
           <span className="text-[11px] font-medium text-muted">Speed</span>
           <input
             type="range"
@@ -359,13 +345,14 @@ export default function StreamViewer({ stream, pcRef, onRequestQuality, controlA
             max={100}
             value={quality}
             onChange={(e) => commitQuality(Number(e.target.value))}
+            onPointerDown={(e) => e.stopPropagation()}
             className="flex-1 accent-violet-light"
           />
           <span className="text-[11px] font-medium text-muted">Quality</span>
         </div>
       )}
 
-      <div className="absolute bottom-3 right-3 flex flex-wrap items-center justify-end gap-2">
+      <div className="absolute bottom-3 right-3 flex flex-wrap items-center justify-end gap-2" {...stopOverlayPropagation}>
         {controlAvailable && (
           <IconButton label="Remote control" active={controlMode} onClick={() => setControlMode((c) => !c)}>
             <Gamepad2 className="h-4 w-4" />

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { QRCodeSVG } from 'qrcode.react'
-import { Copy, Check, ScreenShare, Square, MonitorX, X, Gamepad2 } from 'lucide-react'
+import { Copy, Check, ScreenShare, Square, MonitorX, X, Gamepad2, ArrowLeftRight } from 'lucide-react'
 import toast from 'react-hot-toast'
 import useWebRTC from '../hooks/useWebRTC'
 import { generateRoomId, roomIdToPeerId } from '../lib/roomId'
@@ -36,7 +37,9 @@ const isLocalHostname =
 
 
 export default function HostPage() {
-  const [roomId, setRoomId] = useState(() => generateRoomId())
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [roomId, setRoomId] = useState(() => location.state?.forcedRoomId || generateRoomId())
   const { peer, status: peerStatus, error: peerError } = useWebRTC(roomIdToPeerId(roomId))
 
   const [viewerConn, setViewerConn] = useState(null)
@@ -171,6 +174,10 @@ export default function HostPage() {
         } else if (msg.type === 'control') {
           // viewer is controlling us (only honored if we opted in)
           if (allowControlRef.current) applyControl(msg)
+        } else if (msg.type === 'swap-roles') {
+          // the viewer just made themselves the new host at msg.roomId --
+          // become a viewer of that room instead of re-scanning anything
+          navigate(`/join/${msg.roomId}`)
         }
       }
       conn.on('data', onNativeSignal)
@@ -251,6 +258,16 @@ export default function HostPage() {
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Swap roles with the connected viewer without either side rescanning a
+  // QR code: mint a fresh room id, tell the viewer to become the host at
+  // that id, and become a viewer of it ourselves.
+  const swapRoles = () => {
+    if (!viewerConn?.open) return
+    const newRoomId = generateRoomId()
+    viewerConn.send({ type: 'swap-roles', roomId: newRoomId })
+    navigate(`/join/${newRoomId}`)
+  }
 
   const stopSharing = useCallback(() => {
     localStreamRef.current?.getTracks().forEach((t) => t.stop())
@@ -425,6 +442,15 @@ export default function HostPage() {
                 <ScreenShare className="h-4 w-4" strokeWidth={2.25} />
                 Start sharing
               </Button>
+              {viewerConn?.open && (
+                <button
+                  onClick={swapRoles}
+                  className="inline-flex h-11 w-full max-w-xs items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 px-4 text-sm font-medium text-text transition-colors hover:border-border-strong hover:bg-surface-3"
+                >
+                  <ArrowLeftRight className="h-4 w-4 shrink-0" strokeWidth={2.25} />
+                  Swap roles with viewer
+                </button>
+              )}
               <p className="max-w-xs text-center text-xs text-faint">
                 {viewerConn?.open
                   ? 'A viewer is connected and ready to watch.'
@@ -452,6 +478,15 @@ export default function HostPage() {
                 >
                   <Gamepad2 className="h-4 w-4 shrink-0" strokeWidth={2.25} />
                   {allowControl ? 'Remote control allowed' : 'Allow viewer to control this screen'}
+                </button>
+              )}
+              {viewerConn?.open && (
+                <button
+                  onClick={swapRoles}
+                  className="inline-flex h-11 w-full max-w-xs items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 px-4 text-sm font-medium text-text transition-colors hover:border-border-strong hover:bg-surface-3"
+                >
+                  <ArrowLeftRight className="h-4 w-4 shrink-0" strokeWidth={2.25} />
+                  Swap roles with viewer
                 </button>
               )}
               <Button variant="danger" size="lg" onClick={stopSharing} className="w-full max-w-xs">
