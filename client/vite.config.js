@@ -16,8 +16,10 @@ export default defineConfig(async ({ command }) => {
 
   return {
     // GitHub Pages serves the app under /<repo>/, so production assets and
-    // routes must be prefixed with it. Dev stays at root.
-    base: command === 'build' ? '/Glimpse/' : '/',
+    // routes must be prefixed with it. Dev stays at root. The Android app
+    // (Capacitor) serves the same dist/ from its own local WebView root, not
+    // under /Glimpse/, so it needs CAPACITOR_BUILD=1 to force root instead.
+    base: command === 'build' && !process.env.CAPACITOR_BUILD ? '/Glimpse/' : '/',
     plugins,
     server: {
       host: true, // listen on LAN, not just localhost, so phones can reach the dev server

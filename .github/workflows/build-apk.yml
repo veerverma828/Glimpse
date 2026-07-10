@@ -32,6 +32,8 @@ jobs:
           java-version: 21
 
       - name: Install web deps and build
+        env:
+          CAPACITOR_BUILD: 1
         run: |
           npm ci
           npm run build
