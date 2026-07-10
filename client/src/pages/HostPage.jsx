@@ -88,6 +88,7 @@ export default function HostPage() {
   const qualityValueRef = useRef(qualityValue)
   qualityValueRef.current = qualityValue
   const nativeShareRef = useRef(null)
+  const callRef = useRef(null) // mirrors `call` so the data handler can reach it
 
   // viewer sharing their screen back to us
   const [incomingCall, setIncomingCall] = useState(null)
@@ -97,6 +98,8 @@ export default function HostPage() {
   const incomingContainerRef = useRef(null)
   const { isFullscreen: incomingFullscreen, toggleFullscreen: toggleIncomingFullscreen, supported: incomingFullscreenSupported } =
     useFullscreen(incomingContainerRef, incomingVideoRef)
+
+  useEffect(() => { callRef.current = call }, [call])
 
   // room id already in use -> mint a new one and let the hook re-init
   useEffect(() => {
@@ -181,6 +184,21 @@ export default function HostPage() {
           } catch {
             // stale/duplicate candidates are safe to ignore
           }
+        } else if (msg.type === 'quality-request') {
+          // viewer nudged the quality slider on their end -- apply it to our
+          // live outgoing share, same as the local slider's commitQuality
+          const value = Math.max(0, Math.min(100, Number(msg.value) || 0))
+          setQualityValue(value)
+          const preset = presetForValue(value)
+          const track = localStreamRef.current?.getVideoTracks()[0]
+          if (track) {
+            track.applyConstraints({ frameRate: preset.frameRate, width: preset.width, height: preset.height }).catch(() => {})
+            track.contentHint = preset.contentHint
+          }
+          if (callRef.current?.peerConnection) {
+            applyBitrateCap(callRef.current.peerConnection, preset.maxBitrate)
+          }
+          toast('Viewer requested a quality change')
         }
       }
       conn.on('data', onNativeSignal)

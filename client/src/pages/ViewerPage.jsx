@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { MonitorPlay, ArrowLeft, Volume2, VolumeX, Maximize, Minimize, ScreenShare, Square } from 'lucide-react'
+import { MonitorPlay, ArrowLeft, ScreenShare, Square } from 'lucide-react'
 import useWebRTC from '../hooks/useWebRTC'
-import useFullscreen from '../hooks/useFullscreen'
 import { roomIdToPeerId } from '../lib/roomId'
 import { isNativeApp, startNativeScreenShare, stopNativeScreenShare } from '../lib/nativeScreenCapture'
 import Card from '../components/Card'
 import StatusBadge from '../components/StatusBadge'
 import ErrorAlert from '../components/ErrorAlert'
 import SignalPulse from '../components/SignalPulse'
+import StreamViewer from '../components/StreamViewer'
+
+const MAX_RECONNECT_ATTEMPTS = 5
+const RECONNECT_DELAY_MS = 2000
 
 export default function ViewerPage() {
   const { roomId } = useParams()
@@ -17,20 +20,34 @@ export default function ViewerPage() {
   const [hostConnStatus, setHostConnStatus] = useState('connecting') // connecting | connected | not-found
   const [hasStream, setHasStream] = useState(false)
   const [streamEnded, setStreamEnded] = useState(false)
-  const [muted, setMuted] = useState(true)
+  const [reconnecting, setReconnecting] = useState(false)
+  const [remoteStream, setRemoteStream] = useState(null)
   const [isSharingBack, setIsSharingBack] = useState(false)
   const [shareBackError, setShareBackError] = useState(null)
-  const videoRef = useRef(null)
-  const containerRef = useRef(null)
-  const remoteStreamRef = useRef(null)
   const backStreamRef = useRef(null)
   const backCallRef = useRef(null)
   const hostConnRef = useRef(null)
   const nativeShareBackRef = useRef(null)
-  const { isFullscreen, toggleFullscreen, supported: fullscreenSupported } = useFullscreen(
-    containerRef,
-    videoRef
-  )
+  const pcRef = useRef(null) // active RTCPeerConnection receiving the stream (for stats)
+  const reconnectAttemptRef = useRef(0)
+  const reconnectTimerRef = useRef(null)
+  const [reconnectTick, setReconnectTick] = useState(0)
+
+  // Schedule a reconnect after the host connection drops, unless we've hit
+  // the attempt cap -- then give up and show the ended state. Manual stops
+  // (leaving the page) clear the timer in the effect cleanup below.
+  const scheduleReconnect = () => {
+    if (reconnectAttemptRef.current >= MAX_RECONNECT_ATTEMPTS) {
+      setReconnecting(false)
+      setStreamEnded(true)
+      return
+    }
+    reconnectAttemptRef.current += 1
+    setReconnecting(true)
+    reconnectTimerRef.current = setTimeout(() => {
+      setReconnectTick((t) => t + 1)
+    }, RECONNECT_DELAY_MS)
+  }
 
   useEffect(() => {
     if (!peer || peerStatus !== 'ready') return undefined
@@ -39,9 +56,16 @@ export default function ViewerPage() {
     const conn = peer.connect(hostId, { reliable: true })
     hostConnRef.current = conn
 
-    conn.on('open', () => setHostConnStatus('connected'))
+    conn.on('open', () => {
+      setHostConnStatus('connected')
+      setReconnecting(false)
+      reconnectAttemptRef.current = 0
+    })
     conn.on('error', () => setHostConnStatus('not-found'))
-    conn.on('close', () => setStreamEnded(true))
+    conn.on('close', () => {
+      setHasStream(false)
+      scheduleReconnect()
+    })
 
     // The host may be running the native Android app (see
     // client/src/lib/nativeScreenCapture.js) rather than a browser, in
@@ -60,11 +84,14 @@ export default function ViewerPage() {
           nativePeerConnection = new RTCPeerConnection({
             iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
           })
+          pcRef.current = nativePeerConnection
           nativePeerConnection.ontrack = (event) => {
-            const [remoteStream] = event.streams
-            remoteStreamRef.current = remoteStream
+            const [incoming] = event.streams
+            setRemoteStream(incoming)
             setHasStream(true)
             setStreamEnded(false)
+            setReconnecting(false)
+            reconnectAttemptRef.current = 0
           }
           nativePeerConnection.onicecandidate = (event) => {
             if (event.candidate) {
@@ -77,11 +104,10 @@ export default function ViewerPage() {
             }
           }
           nativePeerConnection.onconnectionstatechange = () => {
-            if (nativePeerConnection.connectionState === 'disconnected' ||
-                nativePeerConnection.connectionState === 'failed' ||
+            if (nativePeerConnection.connectionState === 'failed' ||
                 nativePeerConnection.connectionState === 'closed') {
               setHasStream(false)
-              setStreamEnded(true)
+              scheduleReconnect()
             }
           }
 
@@ -108,10 +134,13 @@ export default function ViewerPage() {
 
     const onCall = (call) => {
       call.answer()
-      call.on('stream', (remoteStream) => {
-        remoteStreamRef.current = remoteStream
+      call.on('stream', (incoming) => {
+        pcRef.current = call.peerConnection
+        setRemoteStream(incoming)
         setHasStream(true)
         setStreamEnded(false)
+        setReconnecting(false)
+        reconnectAttemptRef.current = 0
 
         // minimize the receive-side jitter buffer (Chrome-only hint) so
         // frames get displayed as soon as they arrive instead of being
@@ -125,7 +154,7 @@ export default function ViewerPage() {
       })
       call.on('close', () => {
         setHasStream(false)
-        setStreamEnded(true)
+        scheduleReconnect()
       })
     }
 
@@ -142,28 +171,16 @@ export default function ViewerPage() {
       nativePeerConnection?.close()
       conn.close()
     }
-  }, [peer, peerStatus, roomId])
+  }, [peer, peerStatus, roomId, reconnectTick]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // attach the remote stream once the <video> element exists (it only mounts
-  // after hasStream flips true, one render after the stream arrives)
-  useEffect(() => {
-    if (hasStream && videoRef.current && remoteStreamRef.current) {
-      const video = videoRef.current
-      video.srcObject = remoteStreamRef.current
-      // muted autoplay is allowed everywhere; unmuted autoplay is blocked on
-      // mobile browsers without a user gesture, so retry play() defensively
-      video.play().catch(() => {})
-    }
-  }, [hasStream])
+  // clear any pending reconnect timer on unmount
+  useEffect(() => () => clearTimeout(reconnectTimerRef.current), [])
 
-  // lock to landscape while fullscreen (mobile only; silently no-ops elsewhere)
-  useEffect(() => {
-    if (isFullscreen) {
-      screen.orientation?.lock?.('landscape').catch(() => {})
-    } else {
-      screen.orientation?.unlock?.()
-    }
-  }, [isFullscreen])
+  // ask the host to change quality (host applies it to its outgoing stream);
+  // no-op if the host can't honor it (e.g. native-app host)
+  const requestQuality = (value) => {
+    hostConnRef.current?.open && hostConnRef.current.send({ type: 'quality-request', value })
+  }
 
   // keep the screen awake while actively watching
   useEffect(() => {
@@ -172,13 +189,6 @@ export default function ViewerPage() {
     navigator.wakeLock.request('screen').then((s) => { sentinel = s }).catch(() => {})
     return () => { sentinel?.release().catch(() => {}) }
   }, [hasStream, streamEnded])
-
-  // exit fullscreen if the host stops sharing / connection drops
-  useEffect(() => {
-    if (streamEnded && document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {})
-    }
-  }, [streamEnded])
 
   const stopSharingBack = () => {
     backStreamRef.current?.getTracks().forEach((t) => t.stop())
@@ -289,11 +299,15 @@ export default function ViewerPage() {
     ? 'error'
     : hasStream
       ? 'connected'
-      : hostConnStatus === 'connected'
-        ? 'waiting'
-        : hostConnStatus === 'not-found'
+      : reconnecting
+        ? 'connecting'
+        : streamEnded
           ? 'error'
-          : 'connecting'
+          : hostConnStatus === 'connected'
+            ? 'waiting'
+            : hostConnStatus === 'not-found'
+              ? 'error'
+              : 'connecting'
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pb-12 sm:px-8 sm:pb-16">
@@ -307,45 +321,20 @@ export default function ViewerPage() {
       </section>
 
       <Card className="flex flex-1 flex-col items-center justify-center gap-5 p-5 sm:gap-6 sm:p-8 lg:p-10" glow={hasStream}>
-        {hasStream && !streamEnded ? (
-          <div
-            ref={containerRef}
-            onDoubleClick={toggleFullscreen}
-            className="relative w-full overflow-hidden rounded-xl border border-border-strong bg-void"
-          >
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted={muted}
-              className="aspect-video w-full object-contain"
-            />
-            <button
-              onClick={() => {
-                setMuted((m) => !m)
-                videoRef.current?.play().catch(() => {})
-              }}
-              className="absolute bottom-3 right-3 flex h-11 w-11 items-center justify-center rounded-full border border-border bg-void/70 text-text backdrop-blur transition-colors hover:border-border-strong active:scale-95"
-              aria-label={muted ? 'Unmute' : 'Mute'}
-            >
-              {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-            </button>
-            {fullscreenSupported && (
-              <button
-                onClick={toggleFullscreen}
-                className="absolute bottom-3 right-16 flex h-11 w-11 items-center justify-center rounded-full border border-border bg-void/70 text-text backdrop-blur transition-colors hover:border-border-strong active:scale-95"
-                aria-label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-              >
-                {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
-              </button>
-            )}
-          </div>
+        {hasStream && !streamEnded && remoteStream ? (
+          <StreamViewer stream={remoteStream} pcRef={pcRef} onRequestQuality={requestQuality} />
         ) : (
           <>
             <SignalPulse active={status !== 'error'} tone="cyan" />
             <StatusBadge status={status} />
 
-            {status === 'error' && (
+            {reconnecting && (
+              <p className="max-w-xs text-center text-sm text-muted">
+                Connection dropped — trying to reconnect…
+              </p>
+            )}
+
+            {status === 'error' && !reconnecting && (
               <ErrorAlert
                 title="Can't reach that room"
                 message={
@@ -358,7 +347,7 @@ export default function ViewerPage() {
               />
             )}
 
-            {status === 'waiting' && (
+            {status === 'waiting' && !reconnecting && (
               <p className="max-w-xs text-center text-sm text-muted">
                 You're connected. The screen will appear the moment the host starts sharing.
               </p>
