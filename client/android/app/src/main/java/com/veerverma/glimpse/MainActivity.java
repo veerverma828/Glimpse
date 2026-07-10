@@ -14,6 +14,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(ScreenCapturePlugin.class);
         registerPlugin(ApkUpdaterPlugin.class);
+        registerPlugin(ControlPlugin.class);
         super.onCreate(savedInstanceState);
 
         // Keeps the WebView's JS (PeerJS websocket) alive while minimized --

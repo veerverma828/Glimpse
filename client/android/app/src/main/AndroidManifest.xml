@@ -34,6 +34,20 @@
             android:foregroundServiceType="dataSync"
             android:exported="false" />
 
+        <!-- Injects an approved remote viewer's taps/swipes for remote
+             control. Enabled by the user under Settings > Accessibility. -->
+        <service
+            android:name=".GlimpseControlService"
+            android:exported="false"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

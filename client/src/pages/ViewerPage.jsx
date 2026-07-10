@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { MonitorPlay, ArrowLeft, ScreenShare, Square } from 'lucide-react'
+import toast from 'react-hot-toast'
+import { MonitorPlay, ArrowLeft, ScreenShare, Square, Gamepad2 } from 'lucide-react'
 import useWebRTC from '../hooks/useWebRTC'
 import { roomIdToPeerId } from '../lib/roomId'
 import { isNativeApp, startNativeScreenShare, stopNativeScreenShare } from '../lib/nativeScreenCapture'
+import { controlSupported, isControlServiceEnabled, openControlSettings, applyControl } from '../lib/remoteControl'
 import Card from '../components/Card'
 import StatusBadge from '../components/StatusBadge'
 import ErrorAlert from '../components/ErrorAlert'
@@ -24,6 +26,10 @@ export default function ViewerPage() {
   const [remoteStream, setRemoteStream] = useState(null)
   const [isSharingBack, setIsSharingBack] = useState(false)
   const [shareBackError, setShareBackError] = useState(null)
+  const [hostControlAvailable, setHostControlAvailable] = useState(false) // host lets us control it
+  const [allowControl, setAllowControl] = useState(false) // we let the host control us
+  const allowControlRef = useRef(false)
+  allowControlRef.current = allowControl
   const backStreamRef = useRef(null)
   const backCallRef = useRef(null)
   const hostConnRef = useRef(null)
@@ -60,6 +66,8 @@ export default function ViewerPage() {
       setHostConnStatus('connected')
       setReconnecting(false)
       reconnectAttemptRef.current = 0
+      // tell the host whether it may control us
+      advertiseControl(conn)
     })
     conn.on('error', () => setHostConnStatus('not-found'))
     conn.on('close', () => {
@@ -128,6 +136,11 @@ export default function ViewerPage() {
         } catch {
           // stale/duplicate candidates are safe to ignore
         }
+      } else if (msg.type === 'control-available') {
+        setHostControlAvailable(Boolean(msg.enabled))
+      } else if (msg.type === 'control') {
+        // host is controlling us (only honored if we opted in)
+        if (allowControlRef.current) applyControl(msg)
       }
     }
     conn.on('data', onNativeSignal)
@@ -181,6 +194,43 @@ export default function ViewerPage() {
   const requestQuality = (value) => {
     hostConnRef.current?.open && hostConnRef.current.send({ type: 'quality-request', value })
   }
+
+  // send a control gesture to the host (we're controlling the host device)
+  const sendControl = (msg) => {
+    hostConnRef.current?.open && hostConnRef.current.send({ type: 'control', ...msg })
+  }
+
+  // tell the host whether it may remote-control this device
+  const advertiseControl = async (conn) => {
+    const c = conn || hostConnRef.current
+    if (!c?.open) return
+    const enabled = controlSupported && allowControlRef.current && (await isControlServiceEnabled())
+    c.send({ type: 'control-available', enabled })
+  }
+
+  const toggleAllowControl = async () => {
+    if (!controlSupported) return
+    if (!allowControl) {
+      const enabled = await isControlServiceEnabled()
+      if (!enabled) {
+        toast('Enable “Glimpse” under Accessibility, then flip this on again')
+        await openControlSettings()
+        return
+      }
+      setAllowControl(true)
+    } else {
+      setAllowControl(false)
+    }
+  }
+
+  // re-advertise whenever our opt-in changes, and when we return to the app
+  // (the user may have just enabled the accessibility service)
+  useEffect(() => { advertiseControl() }, [allowControl]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const onFocus = () => { if (allowControlRef.current) advertiseControl() }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // keep the screen awake while actively watching
   useEffect(() => {
@@ -322,7 +372,13 @@ export default function ViewerPage() {
 
       <Card className="flex flex-1 flex-col items-center justify-center gap-5 p-5 sm:gap-6 sm:p-8 lg:p-10" glow={hasStream}>
         {hasStream && !streamEnded && remoteStream ? (
-          <StreamViewer stream={remoteStream} pcRef={pcRef} onRequestQuality={requestQuality} />
+          <StreamViewer
+            stream={remoteStream}
+            pcRef={pcRef}
+            onRequestQuality={requestQuality}
+            controlAvailable={hostControlAvailable}
+            onControl={sendControl}
+          />
         ) : (
           <>
             <SignalPulse active={status !== 'error'} tone="cyan" />
@@ -391,6 +447,20 @@ export default function ViewerPage() {
             >
               <ScreenShare className="h-4 w-4 shrink-0" strokeWidth={2.25} />
               Share your screen with the host
+            </button>
+          )}
+
+          {controlSupported && isSharingBack && (
+            <button
+              onClick={toggleAllowControl}
+              className={`inline-flex h-11 w-full max-w-xs items-center justify-center gap-2 rounded-xl border px-4 text-sm font-medium transition-colors ${
+                allowControl
+                  ? 'border-cyan/40 bg-cyan/10 text-cyan'
+                  : 'border-border bg-surface-2 text-text hover:border-border-strong hover:bg-surface-3'
+              }`}
+            >
+              <Gamepad2 className="h-4 w-4 shrink-0" strokeWidth={2.25} />
+              {allowControl ? 'Remote control allowed' : 'Allow host to control this screen'}
             </button>
           )}
         </div>

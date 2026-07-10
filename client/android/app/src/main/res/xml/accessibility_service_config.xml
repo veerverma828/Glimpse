@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Config for GlimpseControlService: the accessibility service that injects
+     the remote viewer's taps/swipes so a screen share can be remote-controlled.
+     canPerformGestures is the key flag enabling dispatchGesture(). -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeAllMask"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
+    android:canPerformGestures="true"
+    android:canRetrieveWindowContent="false"
+    android:notificationTimeout="100"
+    android:description="@string/control_service_desc" />

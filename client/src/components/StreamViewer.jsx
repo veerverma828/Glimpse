@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Volume2, VolumeX, Maximize, Minimize, RotateCw,
   PictureInPicture2, ZoomIn, ZoomOut, Activity, SlidersHorizontal,
+  Gamepad2, ArrowLeft, Home, SquareStack,
 } from 'lucide-react'
 import useFullscreen from '../hooks/useFullscreen'
 
@@ -39,7 +40,7 @@ function IconButton({ label, active, onClick, children }) {
  * onRequestQuality: (value 0..100) => void, relayed to the host over the
  *          existing data connection so the viewer can nudge quality.
  */
-export default function StreamViewer({ stream, pcRef, onRequestQuality }) {
+export default function StreamViewer({ stream, pcRef, onRequestQuality, controlAvailable, onControl }) {
   const videoRef = useRef(null)
   const containerRef = useRef(null)
   const { isFullscreen, toggleFullscreen, supported: fullscreenSupported } =
@@ -57,8 +58,14 @@ export default function StreamViewer({ stream, pcRef, onRequestQuality }) {
   const [stats, setStats] = useState(null)
   const [showQuality, setShowQuality] = useState(false)
   const [quality, setQuality] = useState(100)
+  const [controlMode, setControlMode] = useState(false)
 
   const pipSupported = typeof document !== 'undefined' && document.pictureInPictureEnabled
+
+  // control can't be on if the far side stopped advertising it
+  useEffect(() => {
+    if (!controlAvailable) setControlMode(false)
+  }, [controlAvailable])
 
   // attach stream
   useEffect(() => {
@@ -151,6 +158,73 @@ export default function StreamViewer({ stream, pcRef, onRequestQuality }) {
   }
   const endPan = () => { dragRef.current = null }
 
+  // Invert the on-screen transform (translate/rotate/scale + object-contain
+  // letterboxing) to turn a screen click into normalized 0..1 coords in the
+  // original captured frame. Returns null if the click landed on the letterbox
+  // rather than the actual video.
+  const mapPointerToFrame = (clientX, clientY) => {
+    const el = containerRef.current
+    const video = videoRef.current
+    if (!el || !video || !video.videoWidth) return null
+    const rect = el.getBoundingClientRect()
+    const W = rect.width, H = rect.height
+    const centerX = W / 2, centerY = H / 2
+
+    // undo translate(pan) and recentre
+    let qx = (clientX - rect.left) - pan.x - centerX
+    let qy = (clientY - rect.top) - pan.y - centerY
+    // undo uniform scale
+    const s = zoom * fitScale
+    qx /= s; qy /= s
+    // undo rotation
+    const rad = (-rotation * Math.PI) / 180
+    const rx = qx * Math.cos(rad) - qy * Math.sin(rad)
+    const ry = qx * Math.sin(rad) + qy * Math.cos(rad)
+    const ex = rx + centerX, ey = ry + centerY
+
+    // object-contain layout of the intrinsic video inside the WxH box
+    const vw = video.videoWidth, vh = video.videoHeight
+    const scale0 = Math.min(W / vw, H / vh)
+    const contentW = vw * scale0, contentH = vh * scale0
+    const offX = (W - contentW) / 2, offY = (H - contentH) / 2
+    const fx = (ex - offX) / contentW
+    const fy = (ey - offY) / contentH
+    if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return null
+    return { nx: fx, ny: fy }
+  }
+
+  // control-mode gestures: tap / long-press / swipe, sent to the far device
+  const controlRef = useRef(null)
+  const startControl = (e) => {
+    const p = mapPointerToFrame(e.clientX, e.clientY)
+    if (!p) return
+    controlRef.current = { ...p, startX: e.clientX, startY: e.clientY, t: Date.now(), moved: false }
+    e.currentTarget.setPointerCapture?.(e.pointerId)
+  }
+  const moveControl = (e) => {
+    const d = controlRef.current
+    if (!d) return
+    if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 8) d.moved = true
+  }
+  const endControl = (e) => {
+    const d = controlRef.current
+    controlRef.current = null
+    if (!d) return
+    const end = mapPointerToFrame(e.clientX, e.clientY) || { nx: d.nx, ny: d.ny }
+    const dt = Date.now() - d.t
+    if (d.moved) {
+      onControl?.({ action: 'swipe', nx1: d.nx, ny1: d.ny, nx2: end.nx, ny2: end.ny, ms: Math.min(800, Math.max(80, dt)) })
+    } else if (dt > 500) {
+      onControl?.({ action: 'long', nx: d.nx, ny: d.ny })
+    } else {
+      onControl?.({ action: 'tap', nx: d.nx, ny: d.ny })
+    }
+  }
+
+  const pointerDown = controlMode ? startControl : startPan
+  const pointerMove = controlMode ? moveControl : movePan
+  const pointerUp = controlMode ? endControl : endPan
+
   const togglePip = async () => {
     const video = videoRef.current
     if (!video) return
@@ -225,14 +299,19 @@ export default function StreamViewer({ stream, pcRef, onRequestQuality }) {
   return (
     <div
       ref={containerRef}
-      onDoubleClick={toggleFullscreen}
+      onDoubleClick={controlMode ? undefined : toggleFullscreen}
       onWheel={onWheel}
-      onPointerDown={startPan}
-      onPointerMove={movePan}
-      onPointerUp={endPan}
-      onPointerCancel={endPan}
-      className="relative w-full overflow-hidden rounded-xl border border-border-strong bg-void"
-      style={{ touchAction: zoom > 1 ? 'none' : 'auto', cursor: zoom > 1 ? 'grab' : 'default' }}
+      onPointerDown={pointerDown}
+      onPointerMove={pointerMove}
+      onPointerUp={pointerUp}
+      onPointerCancel={pointerUp}
+      className={`relative w-full overflow-hidden rounded-xl border bg-void ${
+        controlMode ? 'border-cyan ring-2 ring-cyan/40' : 'border-border-strong'
+      }`}
+      style={{
+        touchAction: controlMode || zoom > 1 ? 'none' : 'auto',
+        cursor: controlMode ? 'crosshair' : zoom > 1 ? 'grab' : 'default',
+      }}
     >
       <video
         ref={videoRef}
@@ -242,6 +321,26 @@ export default function StreamViewer({ stream, pcRef, onRequestQuality }) {
         className="aspect-video w-full object-contain transition-transform duration-150"
         style={{ transform, transformOrigin: 'center center' }}
       />
+
+      {controlMode && (
+        <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-cyan/20 px-2.5 py-1 text-[11px] font-medium text-cyan backdrop-blur">
+          <Gamepad2 className="h-3.5 w-3.5" /> Controlling
+        </div>
+      )}
+
+      {controlMode && (
+        <div className="absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-2">
+          <IconButton label="Back" onClick={() => onControl?.({ action: 'global', name: 'back' })}>
+            <ArrowLeft className="h-4 w-4" />
+          </IconButton>
+          <IconButton label="Home" onClick={() => onControl?.({ action: 'global', name: 'home' })}>
+            <Home className="h-4 w-4" />
+          </IconButton>
+          <IconButton label="Recents" onClick={() => onControl?.({ action: 'global', name: 'recents' })}>
+            <SquareStack className="h-4 w-4" />
+          </IconButton>
+        </div>
+      )}
 
       {showStats && stats && (
         <div className="pointer-events-none absolute left-3 top-3 rounded-lg bg-void/80 px-3 py-2 font-mono text-[11px] leading-relaxed text-cyan backdrop-blur">
@@ -267,6 +366,11 @@ export default function StreamViewer({ stream, pcRef, onRequestQuality }) {
       )}
 
       <div className="absolute bottom-3 right-3 flex flex-wrap items-center justify-end gap-2">
+        {controlAvailable && (
+          <IconButton label="Remote control" active={controlMode} onClick={() => setControlMode((c) => !c)}>
+            <Gamepad2 className="h-4 w-4" />
+          </IconButton>
+        )}
         {onRequestQuality && (
           <IconButton label="Request quality" active={showQuality} onClick={() => setShowQuality((s) => !s)}>
             <SlidersHorizontal className="h-4 w-4" />

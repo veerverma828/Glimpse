@@ -4,4 +4,5 @@
     <string name="title_activity_main">Glimpse</string>
     <string name="package_name">com.veerverma.glimpse</string>
     <string name="custom_url_scheme">com.veerverma.glimpse</string>
+    <string name="control_service_desc">Lets a remote Glimpse viewer you approve tap, swipe, and navigate this device while you share your screen. Only active while you have \"Allow remote control\" turned on in the app.</string>
 </resources>
