@@ -34,6 +34,9 @@ jobs:
       - name: Install web deps and build
         env:
           CAPACITOR_BUILD: 1
+          # baked into the app so it can compare itself against the latest
+          # GitHub release and offer an in-app update (see UpdateChecker.jsx)
+          VITE_APP_BUILD: ${{ github.run_number }}
         run: |
           npm ci
           npm run build

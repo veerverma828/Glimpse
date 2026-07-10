@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import Layout from './components/Layout'
+import UpdateChecker from './components/UpdateChecker'
 import HostPage from './pages/HostPage'
 import ViewerPage from './pages/ViewerPage'
 
@@ -24,6 +25,7 @@ function App() {
           <Route path="/join/:roomId" element={<ViewerPage />} />
         </Routes>
       </Layout>
+      <UpdateChecker />
     </BrowserRouter>
   )
 }
