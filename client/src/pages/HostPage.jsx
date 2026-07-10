@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import useWebRTC from '../hooks/useWebRTC'
 import { generateRoomId, roomIdToPeerId } from '../lib/roomId'
 import { isNativeApp, startNativeScreenShare, stopNativeScreenShare } from '../lib/nativeScreenCapture'
+import { createPcmPlayer } from '../lib/pcmPlayer'
 import { controlSupported, isControlServiceEnabled, openControlSettings, applyControl } from '../lib/remoteControl'
 import { presetForValue, applyBitrateCap } from '../lib/qualityPreset'
 import Card from '../components/Card'
@@ -59,6 +60,7 @@ export default function HostPage() {
   const [incomingCall, setIncomingCall] = useState(null)
   const [incomingStream, setIncomingStream] = useState(null)
   const incomingPcRef = useRef(null) // RTCPeerConnection of the incoming stream (for stats)
+  const incomingAudioPlayerRef = useRef(null) // plays the viewer's native system-audio frames, if any
 
   // remote control
   const [viewerControlAvailable, setViewerControlAvailable] = useState(false) // viewer lets us control it
@@ -174,6 +176,11 @@ export default function HostPage() {
         } else if (msg.type === 'control') {
           // viewer is controlling us (only honored if we opted in)
           if (allowControlRef.current) applyControl(msg)
+        } else if (msg.type === 'native-audio-frame') {
+          // viewer's native app is streaming its system audio to us as raw
+          // PCM frames (bypasses WebRTC's audio pipeline -- see AudioCapturer.java)
+          if (!incomingAudioPlayerRef.current) incomingAudioPlayerRef.current = createPcmPlayer()
+          incomingAudioPlayerRef.current.push(msg.data, msg.sampleRate)
         } else if (msg.type === 'swap-roles') {
           // the viewer just made themselves the new host at msg.roomId --
           // become a viewer of that room instead of re-scanning anything
@@ -214,7 +221,11 @@ export default function HostPage() {
     incomingCall?.close()
     setIncomingCall(null)
     setIncomingStream(null)
+    incomingAudioPlayerRef.current?.stop()
+    incomingAudioPlayerRef.current = null
   }, [incomingCall])
+
+  useEffect(() => () => incomingAudioPlayerRef.current?.stop(), [])
 
   // send a control gesture to the viewer (we're controlling the viewer's
   // shared-back screen)
@@ -551,6 +562,7 @@ export default function HostPage() {
               controlAvailable={viewerControlAvailable}
               onControl={sendControl}
               onRequestQuality={requestViewerQuality}
+              onMuteChange={(muted) => incomingAudioPlayerRef.current?.setMuted(muted)}
             />
             <span className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-void/70 px-2.5 py-1 text-[11px] font-medium text-danger backdrop-blur">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-danger" /> VIEWER'S SCREEN

@@ -86,6 +86,14 @@ export async function startNativeScreenShare(dataConn, { onError, onStopped } = 
   })
   listeners.push(stoppedListener)
 
+  // Relay captured system-audio frames (see AudioCapturer.java) to the
+  // remote peer over this same data connection -- bypasses WebRTC's audio
+  // pipeline entirely, see lib/pcmPlayer.js for the receiving side.
+  const audioListener = await NativeScreenCapture.addListener('audioFrame', ({ data, sampleRate }) => {
+    if (dataConn.open) dataConn.send({ type: 'native-audio-frame', data, sampleRate })
+  })
+  listeners.push(audioListener)
+
   // relay remote ICE candidates (from the browser side) back into the
   // native PeerConnection
   const remoteIceHandler = (msg) => {

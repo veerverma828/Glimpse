@@ -5,7 +5,9 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
+import android.util.Base64;
 import androidx.activity.result.ActivityResult;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.JSObject;
@@ -43,6 +45,26 @@ public class ScreenCapturePlugin extends Plugin {
 
     private GlimpseWebRTCBridge webrtcBridge;
     private PluginCall pendingStartCall;
+    private AudioCapturer audioCapturer;
+    private MediaProjection audioProjection; // separate instance from webrtcBridge's own, audio-only
+
+    private final AudioCapturer.Listener audioListener = new AudioCapturer.Listener() {
+        @Override
+        public void onAudioFrame(byte[] pcm16Mono) {
+            JSObject data = new JSObject();
+            data.put("data", Base64.encodeToString(pcm16Mono, Base64.NO_WRAP));
+            data.put("sampleRate", AudioCapturer.SAMPLE_RATE);
+            notifyListeners("audioFrame", data);
+        }
+
+        @Override
+        public void onError(String message) {
+            // audio is best-effort -- a failure here shouldn't interrupt video
+            JSObject data = new JSObject();
+            data.put("message", message);
+            notifyListeners("audioCaptureError", data);
+        }
+    };
 
     // Fired by the "Stop sharing" action on the live notification. Tears the
     // capture down and tells the JS side, same as a stopCapture() call.
@@ -50,6 +72,7 @@ public class ScreenCapturePlugin extends Plugin {
         @Override
         public void onReceive(Context context, Intent intent) {
             webrtcBridge.stopScreenCapture();
+            stopAudioCapture();
             stopForegroundService();
             notifyListeners("captureStopped", new JSObject());
         }
@@ -135,9 +158,44 @@ public class ScreenCapturePlugin extends Plugin {
             return;
         }
 
+        startAudioCapture(result);
+
         JSObject ret = new JSObject();
         ret.put("started", true);
         call.resolve(ret);
+    }
+
+    // Separate MediaProjection instance from the one ScreenCapturerAndroid
+    // creates internally for video -- getMediaProjection() can be called
+    // again with the same consent result to get an independent instance for
+    // audio. Best-effort: if this fails, video-only sharing still works.
+    private void startAudioCapture(ActivityResult result) {
+        Activity activity = getActivity();
+        if (activity == null) return;
+        try {
+            MediaProjectionManager projectionManager =
+                    (MediaProjectionManager) activity.getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+            audioProjection = projectionManager.getMediaProjection(result.getResultCode(), result.getData());
+            audioCapturer = new AudioCapturer(audioListener);
+            if (!audioCapturer.start(audioProjection)) {
+                audioCapturer = null;
+                audioProjection = null;
+            }
+        } catch (Exception e) {
+            audioCapturer = null;
+            audioProjection = null;
+        }
+    }
+
+    private void stopAudioCapture() {
+        if (audioCapturer != null) {
+            audioCapturer.stop();
+            audioCapturer = null;
+        }
+        if (audioProjection != null) {
+            try { audioProjection.stop(); } catch (Exception ignored) { }
+            audioProjection = null;
+        }
     }
 
     @PluginMethod
@@ -167,6 +225,7 @@ public class ScreenCapturePlugin extends Plugin {
     @PluginMethod
     public void stopCapture(PluginCall call) {
         webrtcBridge.stopScreenCapture();
+        stopAudioCapture();
         stopForegroundService();
         call.resolve();
     }
