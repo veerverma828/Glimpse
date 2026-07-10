@@ -109,6 +109,22 @@ body::after {
   object-fit: contain;
 }
 
+/* Signal-pulse rings: plain CSS animation, not JS/Framer Motion. The rAF
+   loop Framer drives runs on the main thread, which stutters under real
+   WebView jank (Android app + some mobile browsers) and reads as flicker.
+   A CSS @keyframes animation runs on the compositor thread instead, so it
+   keeps animating smoothly even when JS/React work is blocking the page. */
+@keyframes signal-ring {
+  0% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(3.1);
+  }
+}
+
 ::selection {
   background: rgba(124, 92, 255, 0.35);
   color: #fff;
