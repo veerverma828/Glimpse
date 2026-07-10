@@ -5,6 +5,7 @@ import UpdateChecker from './components/UpdateChecker'
 import BottomNav from './components/BottomNav'
 import HostPage from './pages/HostPage'
 import ViewerPage from './pages/ViewerPage'
+import JoinPage from './pages/JoinPage'
 import AboutPage from './pages/AboutPage'
 import { isNativeApp } from './lib/nativeScreenCapture'
 
@@ -26,6 +27,7 @@ function App() {
         <Routes>
           <Route path="/" element={<HostPage />} />
           <Route path="/join/:roomId" element={<ViewerPage />} />
+          {isNativeApp && <Route path="/join" element={<JoinPage />} />}
           {isNativeApp && <Route path="/about" element={<AboutPage />} />}
         </Routes>
       </Layout>
