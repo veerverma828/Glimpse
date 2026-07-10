@@ -6,7 +6,6 @@ import useWebRTC from '../hooks/useWebRTC'
 import useFullscreen from '../hooks/useFullscreen'
 import { generateRoomId, roomIdToPeerId } from '../lib/roomId'
 import { isNativeApp, startNativeScreenShare, stopNativeScreenShare } from '../lib/nativeScreenCapture'
-import { getUnsupportedShareMessage } from '../lib/screenShareSupport'
 import Card from '../components/Card'
 import Button from '../components/Button'
 import StatusBadge from '../components/StatusBadge'
@@ -278,7 +277,9 @@ export default function HostPage() {
           'Your browser exposes no media APIs on this page. Make sure the URL is HTTPS and the certificate is fully trusted (green padlock, no warning).'
         )
       } else {
-        setShareError(getUnsupportedShareMessage())
+        setShareError(
+          "This browser doesn't implement screen capture. On Android, use the latest Chrome; iOS Safari can't screen-share at all."
+        )
       }
       return
     }
