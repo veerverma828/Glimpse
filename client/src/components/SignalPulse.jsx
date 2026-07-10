@@ -11,8 +11,8 @@ export default function SignalPulse({ active = true, size = 160, tone = 'violet'
 
   return (
     <div
-      className="relative flex items-center justify-center"
-      style={{ width: size, height: size }}
+      className="relative isolate flex items-center justify-center"
+      style={{ width: size, height: size, transform: 'translateZ(0)' }}
       aria-hidden="true"
     >
       {active &&
@@ -20,7 +20,17 @@ export default function SignalPulse({ active = true, size = 160, tone = 'violet'
           <motion.span
             key={i}
             className="absolute rounded-full border"
-            style={{ borderColor: color, width: '30%', height: '30%' }}
+            // force this onto its own GPU layer so mobile Chromium (both
+            // mobile browsers and the Android WebView) doesn't keep
+            // re-compositing it against the blurred card/glow behind it
+            // every frame -- that re-decision is what reads as flicker
+            style={{
+              borderColor: color,
+              width: '30%',
+              height: '30%',
+              willChange: 'transform, opacity',
+              transform: 'translateZ(0)',
+            }}
             initial={{ opacity: 0.55, scale: 1 }}
             animate={{ opacity: 0, scale: 3.1 }}
             transition={{
@@ -36,6 +46,7 @@ export default function SignalPulse({ active = true, size = 160, tone = 'violet'
         style={{
           background: `linear-gradient(135deg, var(--color-violet), var(--color-cyan))`,
           '--tw-shadow-color': color,
+          transform: 'translateZ(0)',
         }}
       />
     </div>
