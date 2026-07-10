@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { MonitorPlay, ArrowLeft, ScreenShare, Square, Gamepad2 } from 'lucide-react'
+import { MonitorPlay, ArrowLeft, ScreenShare, Square, Gamepad2, ArrowLeftRight } from 'lucide-react'
 import useWebRTC from '../hooks/useWebRTC'
-import { roomIdToPeerId } from '../lib/roomId'
+import { roomIdToPeerId, generateRoomId } from '../lib/roomId'
 import { isNativeApp, startNativeScreenShare, stopNativeScreenShare } from '../lib/nativeScreenCapture'
 import { controlSupported, isControlServiceEnabled, openControlSettings, applyControl } from '../lib/remoteControl'
 import { presetForValue, applyBitrateCap } from '../lib/qualityPreset'
@@ -18,6 +18,7 @@ const RECONNECT_DELAY_MS = 2000
 
 export default function ViewerPage() {
   const { roomId } = useParams()
+  const navigate = useNavigate()
   const { peer, status: peerStatus, error: peerError } = useWebRTC()
 
   const [hostConnStatus, setHostConnStatus] = useState('connecting') // connecting | connected | not-found
@@ -158,6 +159,10 @@ export default function ViewerPage() {
           applyBitrateCap(backCallRef.current.peerConnection, preset.maxBitrate)
         }
         if (track || backCallRef.current) toast('Host requested a quality change')
+      } else if (msg.type === 'swap-roles') {
+        // the host just made themselves a viewer of msg.roomId -- become
+        // the host of that room ourselves instead of re-scanning anything
+        navigate('/', { state: { forcedRoomId: msg.roomId } })
       }
     }
     conn.on('data', onNativeSignal)
@@ -215,6 +220,16 @@ export default function ViewerPage() {
   // send a control gesture to the host (we're controlling the host device)
   const sendControl = (msg) => {
     hostConnRef.current?.open && hostConnRef.current.send({ type: 'control', ...msg })
+  }
+
+  // Swap roles with the host without either side rescanning a QR code: mint
+  // a fresh room id, tell the host to become a viewer of it, and become the
+  // host of it ourselves.
+  const swapRoles = () => {
+    if (!hostConnRef.current?.open) return
+    const newRoomId = generateRoomId()
+    hostConnRef.current.send({ type: 'swap-roles', roomId: newRoomId })
+    navigate('/', { state: { forcedRoomId: newRoomId } })
   }
 
   // tell the host whether it may remote-control this device
@@ -482,6 +497,14 @@ export default function ViewerPage() {
               {allowControl ? 'Remote control allowed' : 'Allow host to control this screen'}
             </button>
           )}
+
+          <button
+            onClick={swapRoles}
+            className="inline-flex h-11 w-full max-w-xs items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 px-4 text-sm font-medium text-text transition-colors hover:border-border-strong hover:bg-surface-3"
+          >
+            <ArrowLeftRight className="h-4 w-4 shrink-0" strokeWidth={2.25} />
+            Swap roles with host
+          </button>
         </div>
       )}
     </div>
