@@ -40,13 +40,20 @@ function IconButton({ label, active, onClick, children }) {
  * onRequestQuality: (value 0..100) => void, relayed to the host over the
  *          existing data connection so the viewer can nudge quality.
  */
-export default function StreamViewer({ stream, pcRef, onRequestQuality, controlAvailable, onControl }) {
+export default function StreamViewer({ stream, pcRef, onRequestQuality, controlAvailable, onControl, onMuteChange }) {
   const videoRef = useRef(null)
   const containerRef = useRef(null)
   const { isFullscreen, toggleFullscreen, supported: fullscreenSupported } =
     useFullscreen(containerRef, videoRef)
 
-  const [muted, setMuted] = useState(true)
+  const [muted, setMutedState] = useState(true)
+  const setMuted = (updater) => {
+    setMutedState((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater
+      onMuteChange?.(next)
+      return next
+    })
+  }
   const [rotation, setRotation] = useState(0) // 0 | 90 | 180 | 270, manual only
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -59,6 +66,10 @@ export default function StreamViewer({ stream, pcRef, onRequestQuality, controlA
   const [controlMode, setControlMode] = useState(false)
 
   const pipSupported = typeof document !== 'undefined' && document.pictureInPictureEnabled
+
+  // tell the parent the initial mute state (defaults to muted) so any
+  // side-channel audio (e.g. native PCM playback) starts in sync
+  useEffect(() => { onMuteChange?.(muted) }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // control can't be on if the far side stopped advertising it
   useEffect(() => {

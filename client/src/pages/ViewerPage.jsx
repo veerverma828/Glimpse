@@ -5,6 +5,7 @@ import { MonitorPlay, ArrowLeft, ScreenShare, Square, Gamepad2, ArrowLeftRight }
 import useWebRTC from '../hooks/useWebRTC'
 import { roomIdToPeerId, generateRoomId } from '../lib/roomId'
 import { isNativeApp, startNativeScreenShare, stopNativeScreenShare } from '../lib/nativeScreenCapture'
+import { createPcmPlayer } from '../lib/pcmPlayer'
 import { controlSupported, isControlServiceEnabled, openControlSettings, applyControl } from '../lib/remoteControl'
 import { presetForValue, applyBitrateCap } from '../lib/qualityPreset'
 import Card from '../components/Card'
@@ -37,6 +38,7 @@ export default function ViewerPage() {
   const hostConnRef = useRef(null)
   const nativeShareBackRef = useRef(null)
   const pcRef = useRef(null) // active RTCPeerConnection receiving the stream (for stats)
+  const audioPlayerRef = useRef(null) // plays the host's native system-audio frames, if any
   const reconnectAttemptRef = useRef(0)
   const reconnectTimerRef = useRef(null)
   const [reconnectTick, setReconnectTick] = useState(0)
@@ -159,6 +161,11 @@ export default function ViewerPage() {
           applyBitrateCap(backCallRef.current.peerConnection, preset.maxBitrate)
         }
         if (track || backCallRef.current) toast('Host requested a quality change')
+      } else if (msg.type === 'native-audio-frame') {
+        // host's native app is streaming its system audio to us as raw PCM
+        // frames (bypasses WebRTC's audio pipeline -- see AudioCapturer.java)
+        if (!audioPlayerRef.current) audioPlayerRef.current = createPcmPlayer()
+        audioPlayerRef.current.push(msg.data, msg.sampleRate)
       } else if (msg.type === 'swap-roles') {
         // the host just made themselves a viewer of msg.roomId -- become
         // the host of that room ourselves instead of re-scanning anything
@@ -210,6 +217,15 @@ export default function ViewerPage() {
 
   // clear any pending reconnect timer on unmount
   useEffect(() => () => clearTimeout(reconnectTimerRef.current), [])
+
+  // stop the native-audio player whenever the stream ends, and on unmount
+  useEffect(() => {
+    if ((streamEnded || !hasStream) && audioPlayerRef.current) {
+      audioPlayerRef.current.stop()
+      audioPlayerRef.current = null
+    }
+  }, [streamEnded, hasStream])
+  useEffect(() => () => audioPlayerRef.current?.stop(), [])
 
   // ask the host to change quality (host applies it to its outgoing stream);
   // no-op if the host can't honor it (e.g. native-app host)
@@ -412,6 +428,7 @@ export default function ViewerPage() {
             onRequestQuality={requestQuality}
             controlAvailable={hostControlAvailable}
             onControl={sendControl}
+            onMuteChange={(muted) => audioPlayerRef.current?.setMuted(muted)}
           />
         ) : (
           <>
