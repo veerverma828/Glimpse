@@ -1,9 +1,13 @@
 package com.veerverma.glimpse;
 
 import android.app.Activity;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.media.projection.MediaProjectionManager;
 import androidx.activity.result.ActivityResult;
+import androidx.core.content.ContextCompat;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -40,8 +44,26 @@ public class ScreenCapturePlugin extends Plugin {
     private GlimpseWebRTCBridge webrtcBridge;
     private PluginCall pendingStartCall;
 
+    // Fired by the "Stop sharing" action on the live notification. Tears the
+    // capture down and tells the JS side, same as a stopCapture() call.
+    private final BroadcastReceiver stopReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            webrtcBridge.stopScreenCapture();
+            stopForegroundService();
+            notifyListeners("captureStopped", new JSObject());
+        }
+    };
+
     @Override
     public void load() {
+        ContextCompat.registerReceiver(
+                getContext(),
+                stopReceiver,
+                new IntentFilter(ScreenCaptureService.ACTION_STOP_SHARING),
+                ContextCompat.RECEIVER_NOT_EXPORTED
+        );
+
         webrtcBridge = new GlimpseWebRTCBridge(getContext(), new GlimpseWebRTCBridge.Listener() {
             @Override
             public void onLocalOffer(String sdp) {
@@ -164,5 +186,15 @@ public class ScreenCapturePlugin extends Plugin {
         if (activity != null) {
             activity.stopService(new Intent(activity, ScreenCaptureService.class));
         }
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        try {
+            getContext().unregisterReceiver(stopReceiver);
+        } catch (IllegalArgumentException ignored) {
+            // never registered / already gone
+        }
+        super.handleOnDestroy();
     }
 }
