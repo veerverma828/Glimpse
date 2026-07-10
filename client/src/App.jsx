@@ -6,13 +6,11 @@ import BottomNav from './components/BottomNav'
 import HostPage from './pages/HostPage'
 import ViewerPage from './pages/ViewerPage'
 import AboutPage from './pages/AboutPage'
-import DeepLinkHandler from './components/DeepLinkHandler'
 import { isNativeApp } from './lib/nativeScreenCapture'
 
 function App() {
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL}>
-      {isNativeApp && <DeepLinkHandler />}
       <Toaster
         position="bottom-center"
         toastOptions={{

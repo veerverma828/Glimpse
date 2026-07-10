@@ -22,21 +22,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Opens join links in the app instead of the browser. No
-                 autoVerify (that needs assetlinks.json hosted at the
-                 domain root, which this project page doesn't control), so
-                 Android will show an "Open with" chooser the first time;
-                 picking Glimpse + "Always" makes it seamless after that. -->
-            <intent-filter android:label="@string/title_activity_main">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:scheme="https"
-                    android:host="veerverma828.github.io"
-                    android:pathPrefix="/Glimpse/join" />
-            </intent-filter>
-
         </activity>
 
         <service
