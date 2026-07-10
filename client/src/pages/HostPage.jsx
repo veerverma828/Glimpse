@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
-import { Copy, Check, ScreenShare, Square, MonitorX, Volume2, VolumeX, Maximize, Minimize, X } from 'lucide-react'
+import { Copy, Check, ScreenShare, Square, MonitorX, X, Gamepad2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import useWebRTC from '../hooks/useWebRTC'
-import useFullscreen from '../hooks/useFullscreen'
 import { generateRoomId, roomIdToPeerId } from '../lib/roomId'
 import { isNativeApp, startNativeScreenShare, stopNativeScreenShare } from '../lib/nativeScreenCapture'
+import { controlSupported, isControlServiceEnabled, openControlSettings, applyControl } from '../lib/remoteControl'
 import Card from '../components/Card'
 import Button from '../components/Button'
 import StatusBadge from '../components/StatusBadge'
@@ -13,6 +13,7 @@ import ErrorAlert from '../components/ErrorAlert'
 import SignalPulse from '../components/SignalPulse'
 import EmptyState from '../components/EmptyState'
 import QualitySlider from '../components/QualitySlider'
+import StreamViewer from '../components/StreamViewer'
 
 // Inside the installed app, Capacitor serves the WebView from its own
 // virtual https://localhost origin -- that's not a real, reachable address,
@@ -93,13 +94,17 @@ export default function HostPage() {
   // viewer sharing their screen back to us
   const [incomingCall, setIncomingCall] = useState(null)
   const [incomingStream, setIncomingStream] = useState(null)
-  const [incomingMuted, setIncomingMuted] = useState(true)
-  const incomingVideoRef = useRef(null)
-  const incomingContainerRef = useRef(null)
-  const { isFullscreen: incomingFullscreen, toggleFullscreen: toggleIncomingFullscreen, supported: incomingFullscreenSupported } =
-    useFullscreen(incomingContainerRef, incomingVideoRef)
+  const incomingPcRef = useRef(null) // RTCPeerConnection of the incoming stream (for stats)
+
+  // remote control
+  const [viewerControlAvailable, setViewerControlAvailable] = useState(false) // viewer lets us control it
+  const [allowControl, setAllowControl] = useState(false) // we let the viewer control us
+  const allowControlRef = useRef(false)
+  allowControlRef.current = allowControl
+  const viewerConnRef = useRef(null)
 
   useEffect(() => { callRef.current = call }, [call])
+  useEffect(() => { viewerConnRef.current = viewerConn }, [viewerConn])
 
   // room id already in use -> mint a new one and let the hook re-init
   useEffect(() => {
@@ -118,6 +123,7 @@ export default function HostPage() {
       conn.on('close', () => setViewerConn(null))
       conn.on('open', () => {
         toast.success('A viewer joined')
+        advertiseControl(conn)
         if (localStreamRef.current) {
           const outgoingCall = peer.call(conn.peer, localStreamRef.current)
           applyBitrateCap(
@@ -143,11 +149,11 @@ export default function HostPage() {
             nativePeerConnection = new RTCPeerConnection({
               iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
             })
+            incomingPcRef.current = nativePeerConnection
             nativePeerConnection.ontrack = (event) => {
               const [remoteStream] = event.streams
               setIncomingCall({ close: () => nativePeerConnection?.close() })
               setIncomingStream(remoteStream)
-              setIncomingMuted(true)
               toast.success("Viewer's screen is streaming in")
             }
             nativePeerConnection.onicecandidate = (event) => {
@@ -199,6 +205,11 @@ export default function HostPage() {
             applyBitrateCap(callRef.current.peerConnection, preset.maxBitrate)
           }
           toast('Viewer requested a quality change')
+        } else if (msg.type === 'control-available') {
+          setViewerControlAvailable(Boolean(msg.enabled))
+        } else if (msg.type === 'control') {
+          // viewer is controlling us (only honored if we opted in)
+          if (allowControlRef.current) applyControl(msg)
         }
       }
       conn.on('data', onNativeSignal)
@@ -216,9 +227,9 @@ export default function HostPage() {
     const onCall = (call) => {
       call.answer()
       call.on('stream', (stream) => {
+        incomingPcRef.current = call.peerConnection
         setIncomingCall(call)
         setIncomingStream(stream)
-        setIncomingMuted(true)
         toast.success("Viewer's screen is streaming in")
       })
       call.on('close', () => {
@@ -236,6 +247,42 @@ export default function HostPage() {
     setIncomingCall(null)
     setIncomingStream(null)
   }, [incomingCall])
+
+  // send a control gesture to the viewer (we're controlling the viewer's
+  // shared-back screen)
+  const sendControl = (msg) => {
+    viewerConnRef.current?.open && viewerConnRef.current.send({ type: 'control', ...msg })
+  }
+
+  // tell the viewer whether it may remote-control this device
+  const advertiseControl = async (conn) => {
+    const c = conn || viewerConnRef.current
+    if (!c?.open) return
+    const enabled = controlSupported && allowControlRef.current && (await isControlServiceEnabled())
+    c.send({ type: 'control-available', enabled })
+  }
+
+  const toggleAllowControl = async () => {
+    if (!controlSupported) return
+    if (!allowControl) {
+      const enabled = await isControlServiceEnabled()
+      if (!enabled) {
+        toast('Enable “Glimpse” under Accessibility, then flip this on again')
+        await openControlSettings()
+        return
+      }
+      setAllowControl(true)
+    } else {
+      setAllowControl(false)
+    }
+  }
+
+  useEffect(() => { advertiseControl() }, [allowControl]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const onFocus = () => { if (allowControlRef.current) advertiseControl() }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const stopSharing = useCallback(() => {
     localStreamRef.current?.getTracks().forEach((t) => t.stop())
@@ -353,14 +400,6 @@ export default function HostPage() {
     }
   }
 
-  // attach the viewer's incoming stream once the overlay's <video> mounts
-  useEffect(() => {
-    if (incomingStream && incomingVideoRef.current) {
-      incomingVideoRef.current.srcObject = incomingStream
-      incomingVideoRef.current.play().catch(() => {})
-    }
-  }, [incomingStream])
-
   const joinUrl = buildJoinUrl(roomId)
 
   const copyLink = async () => {
@@ -434,6 +473,19 @@ export default function HostPage() {
               </div>
               <StatusBadge status={status} />
               {qualityToggle}
+              {controlSupported && (
+                <button
+                  onClick={toggleAllowControl}
+                  className={`inline-flex h-11 w-full max-w-xs items-center justify-center gap-2 rounded-xl border px-4 text-sm font-medium transition-colors ${
+                    allowControl
+                      ? 'border-cyan/40 bg-cyan/10 text-cyan'
+                      : 'border-border bg-surface-2 text-text hover:border-border-strong hover:bg-surface-3'
+                  }`}
+                >
+                  <Gamepad2 className="h-4 w-4 shrink-0" strokeWidth={2.25} />
+                  {allowControl ? 'Remote control allowed' : 'Allow viewer to control this screen'}
+                </button>
+              )}
               <Button variant="danger" size="lg" onClick={stopSharing} className="w-full max-w-xs">
                 <Square className="h-4 w-4" strokeWidth={2.25} />
                 Stop sharing
@@ -488,40 +540,20 @@ export default function HostPage() {
       </div>
 
       {incomingStream && (
-        <div
-          ref={incomingContainerRef}
-          className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-void"
-        >
-          <video
-            ref={incomingVideoRef}
-            autoPlay
-            playsInline
-            muted={incomingMuted}
-            className="h-full w-full object-contain"
-          />
-          <span className="absolute left-4 top-4 flex items-center gap-1.5 rounded-full bg-void/70 px-2.5 py-1 text-[11px] font-medium text-danger backdrop-blur">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-danger" /> VIEWER'S SCREEN
-          </span>
-          <div className="absolute bottom-4 right-4 flex items-center gap-2">
-            <button
-              onClick={() => setIncomingMuted((m) => !m)}
-              className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-void/70 text-text backdrop-blur transition-colors hover:border-border-strong active:scale-95"
-              aria-label={incomingMuted ? 'Unmute' : 'Mute'}
-            >
-              {incomingMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-            </button>
-            {incomingFullscreenSupported && (
-              <button
-                onClick={toggleIncomingFullscreen}
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-void/70 text-text backdrop-blur transition-colors hover:border-border-strong active:scale-95"
-                aria-label={incomingFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-              >
-                {incomingFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
-              </button>
-            )}
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-void p-3 sm:p-6">
+          <div className="relative w-full max-w-5xl">
+            <StreamViewer
+              stream={incomingStream}
+              pcRef={incomingPcRef}
+              controlAvailable={viewerControlAvailable}
+              onControl={sendControl}
+            />
+            <span className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-void/70 px-2.5 py-1 text-[11px] font-medium text-danger backdrop-blur">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-danger" /> VIEWER'S SCREEN
+            </span>
             <button
               onClick={stopWatchingIncoming}
-              className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-void/70 text-danger backdrop-blur transition-colors hover:border-border-strong active:scale-95"
+              className="absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-full border border-border bg-void/70 text-danger backdrop-blur transition-colors hover:border-border-strong active:scale-95"
               aria-label="Stop viewing"
             >
               <X className="h-4 w-4" />
