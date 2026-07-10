@@ -4,6 +4,7 @@ import { MonitorPlay, ArrowLeft, Volume2, VolumeX, Maximize, Minimize, ScreenSha
 import useWebRTC from '../hooks/useWebRTC'
 import useFullscreen from '../hooks/useFullscreen'
 import { roomIdToPeerId } from '../lib/roomId'
+import { isNativeApp, startNativeScreenShare, stopNativeScreenShare } from '../lib/nativeScreenCapture'
 import Card from '../components/Card'
 import StatusBadge from '../components/StatusBadge'
 import ErrorAlert from '../components/ErrorAlert'
@@ -24,6 +25,8 @@ export default function ViewerPage() {
   const remoteStreamRef = useRef(null)
   const backStreamRef = useRef(null)
   const backCallRef = useRef(null)
+  const hostConnRef = useRef(null)
+  const nativeShareBackRef = useRef(null)
   const { isFullscreen, toggleFullscreen, supported: fullscreenSupported } = useFullscreen(
     containerRef,
     videoRef
@@ -34,6 +37,7 @@ export default function ViewerPage() {
 
     const hostId = roomIdToPeerId(roomId)
     const conn = peer.connect(hostId, { reliable: true })
+    hostConnRef.current = conn
 
     conn.on('open', () => setHostConnStatus('connected'))
     conn.on('error', () => setHostConnStatus('not-found'))
@@ -181,7 +185,43 @@ export default function ViewerPage() {
     backStreamRef.current = null
     backCallRef.current?.close()
     backCallRef.current = null
+    if (nativeShareBackRef.current) {
+      nativeShareBackRef.current.stop().catch(() => {})
+      nativeShareBackRef.current = null
+    } else if (isNativeApp) {
+      stopNativeScreenShare().catch(() => {})
+    }
     setIsSharingBack(false)
+  }
+
+  // Native path: same reason as HostPage — Chrome for Android has no
+  // getDisplayMedia() at all, so inside the packaged app this must go
+  // through native MediaProjection capture instead, relayed over the
+  // existing PeerJS DataConnection to the host (see lib/nativeScreenCapture.js
+  // and the matching onNativeSignal handler in HostPage).
+  const startSharingBackNative = async () => {
+    const conn = hostConnRef.current
+    if (!conn?.open) {
+      setShareBackError('Not connected to the host yet.')
+      return
+    }
+    try {
+      const handle = await startNativeScreenShare(conn, {
+        onError: (message) => {
+          setShareBackError(message)
+          setIsSharingBack(false)
+          nativeShareBackRef.current = null
+        },
+        onStopped: () => {
+          setIsSharingBack(false)
+          nativeShareBackRef.current = null
+        },
+      })
+      nativeShareBackRef.current = handle
+      setIsSharingBack(true)
+    } catch (err) {
+      setShareBackError(err.message || 'Failed to start native screen sharing')
+    }
   }
 
   // getDisplayMedia is missing on many mobile browsers, but detection is
@@ -191,6 +231,12 @@ export default function ViewerPage() {
   const startSharingBack = async () => {
     if (!peer || peerStatus !== 'ready') return
     setShareBackError(null)
+
+    if (isNativeApp) {
+      await startSharingBackNative()
+      return
+    }
+
     if (typeof navigator.mediaDevices?.getDisplayMedia !== 'function') {
       // distinguish the two real causes: insecure origin (mediaDevices
       // stripped) vs. a browser that genuinely lacks the API
