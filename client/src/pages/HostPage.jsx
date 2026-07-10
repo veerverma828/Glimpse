@@ -14,14 +14,23 @@ import SignalPulse from '../components/SignalPulse'
 import EmptyState from '../components/EmptyState'
 import QualitySlider from '../components/QualitySlider'
 
+// Inside the installed app, Capacitor serves the WebView from its own
+// virtual https://localhost origin -- that's not a real, reachable address,
+// so window.location.origin is useless there for a link/QR code a *different*
+// device needs to open. Use the real hosted site instead.
+const PUBLIC_SITE_ORIGIN = 'https://veerverma828.github.io/Glimpse/'
+
 function buildJoinUrl(roomId) {
-  const base = window.location.origin + import.meta.env.BASE_URL
+  const base = isNativeApp ? PUBLIC_SITE_ORIGIN : window.location.origin + import.meta.env.BASE_URL
   return `${base}join/${roomId}`.replace(/([^:])\/\//g, '$1/')
 }
 
-const isLocalHostname = ['localhost', '127.0.0.1', '0.0.0.0', ''].includes(
-  window.location.hostname
-)
+// Same virtual-origin issue: Capacitor's WebView hostname is always
+// "localhost" by design, which isn't the "you typed localhost by mistake on
+// your phone" case this warning exists for -- so it must never fire natively.
+const isLocalHostname =
+  !isNativeApp &&
+  ['localhost', '127.0.0.1', '0.0.0.0', ''].includes(window.location.hostname)
 
 // slider goes 0 (max speed: low res, high fps, low bitrate) to 100 (max
 // quality: high res, capped fps, richer encode). Values in between are
